@@ -77,4 +77,4 @@ Details: [architecture overview](docs/architecture/overview.md) and [decision re
 
 ## License
 
-Proprietary. All rights reserved, and no licence is granted to use, copy, modify or distribute this code (`"license": "UNLICENSED"` in `package.json`). There is deliberately no `LICENSE` file yet: one needs the legal name of the copyright holder, which is the owner's to supply. The longer-term approach is an open question, see [gap 17](docs/architecture/open-questions.md).
+Proprietary. Copyright (c) 2026 Richard Mensah, all rights reserved. See [LICENSE](LICENSE). The code can be read, but no licence is granted to use, copy, modify or distribute it (`"license": "UNLICENSED"` in `package.json`). The longer-term approach is an open question, see [gap 17](docs/architecture/open-questions.md).
