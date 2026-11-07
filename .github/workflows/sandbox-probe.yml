@@ -62,6 +62,18 @@ jobs:
         run: |
           docker run --rm --runtime=runsc alpine:3.20 sh -c 'echo "uname: $(uname -a)"; dmesg 2>&1 | head -5'
 
+      - name: KVM actually usable (needed for microVMs)
+        if: always()
+        run: |
+          sudo python3 - <<'PY'
+          import fcntl, os
+          fd = os.open('/dev/kvm', os.O_RDWR | os.O_CLOEXEC)
+          print('KVM API version:', fcntl.ioctl(fd, 0xAE00))  # KVM_GET_API_VERSION
+          vm = fcntl.ioctl(fd, 0xAE01, 0)                      # KVM_CREATE_VM
+          print('KVM_CREATE_VM succeeded, vm fd =', vm)
+          os.close(vm); os.close(fd)
+          PY
+
       - name: gVisor with the full hardened flags
         if: always()
         run: |
