@@ -31,6 +31,25 @@ Isolation added after code paths already exist is how escapes and credential lea
 - Driver tests need a container runtime. Policy construction and validation are unit-tested everywhere. Driver integration tests need Docker, run in CI, and must be reported as skipped, never as passed, where no daemon is available.
 - Nothing in the documentation or the product may claim isolation until the gate 8 evidence exists.
 
+## Evidence so far
+
+A throwaway probe ran three times on 2026-11-07 on a GitHub-hosted runner (standard `ubuntu-latest`: Ubuntu 26.04.1, 2 vCPU, about 8 GB, Docker 29.4.2) in this private repository on the free plan.
+
+| Check                                                                                                         | Result                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Hardened container: non-root, read-only root filesystem, no capabilities, no network, process and memory caps | Passed. uid 65534, empty capability sets, writes to `/` refused, no network                                                          |
+| gVisor (`runsc` release-20261102.0) from its signed apt repository, registered as a Docker runtime            | Worked. A container under it reported gVisor's own kernel (`4.19.0-gvisor`), and the full set of hardened flags also worked under it |
+| KVM, which microVMs such as Firecracker and Kata need                                                         | `/dev/kvm` was present in all three runs, and a test virtual machine could be created through it (KVM API version 12)                |
+
+What this shows and does not show:
+
+- These isolation layers can be exercised in CI without paying for infrastructure, so driver integration tests can run there. The engineering session's own environment has no container daemon and no KVM, so CI is the test environment.
+- It does **not** show the isolation is strong. No escape or resource-abuse test has run (release gate 8 is still not started), and no microVM has been booted yet. Only a KVM virtual machine was created.
+- It is one runner type on one date. I found no official statement guaranteeing KVM on GitHub-hosted runners, so treat it as something to re-check, not to rely on. Re-run the probe if the repository's visibility or plan changes.
+- The first two attempts failed because the gVisor download path I used from memory had changed. The install steps came from the current install guide. Real driver tests must pin the image by digest and the gVisor version.
+
+Next: boot a Firecracker microVM in CI, write the first escape and resource-abuse tests, and pin versions.
+
 ## Alternatives considered
 
 - **Keep the sandbox in Phase 5 and make Phase 2 static-only.** Cheaper now, but it relies on discipline, and verification cannot run tests until Phase 5.

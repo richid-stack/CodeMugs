@@ -62,7 +62,7 @@ From outcome tracking: was the diagnosis correct, did the fix work, did tests ca
 ## Open questions
 
 - Within the stated direction (everyone who builds or runs software), which segment is first after OpenLobs, and who inside those companies approves and uses the product? "Everyone" is the direction, not a first release: the first milestone needs one narrow, reachable group of design partners.
-- Which programming languages and frameworks must the first milestone support? Proposal: start with the languages OpenLobs uses, then widen. Each language needs its own parser and analyser, so breadth is expensive.
+- Which programming languages and frameworks must the first milestone support? The original brief starts the SDKs with JavaScript/TypeScript and Python, selects test tooling per customer language, and says to expand to more languages after the first milestone. **Proposal (draft, owner to confirm):** the first milestone supports JavaScript/TypeScript applications on Node only, with Python second. One language keeps the whole loop (parse, run tests, change, verify) reliable, and it lets CodeMugs analyse its own repository as the first test subject. The brief does not say which language OpenLobs uses. If it is neither, that takes priority. Each language needs its own parser, analyser and test runner, so breadth is expensive.
 - What autonomy level is the default for a new customer?
 - What is the pricing model? It determines what must be metered.
 - What does "verified" mean for a customer whose application has little or no test coverage?

@@ -5,7 +5,11 @@
 1. Branch from `main`. Keep changes small and focused.
 2. Run `pnpm verify` before pushing. It runs the same checks as CI.
 3. Open a pull request using the template. CI must pass before merge.
-4. `main` is protected. See [repository setup](docs/engineering/repository-setup.md) for the expected settings.
+4. `main` is meant to be protected. See [repository setup](docs/engineering/repository-setup.md) for the current status and the settings.
+
+## Outside contributions
+
+Not accepted yet. The licence terms and a contributor agreement (CLA) have to be settled first, see [open question 17](docs/architecture/open-questions.md). Issues and security reports are welcome.
 
 ## Commits
 
