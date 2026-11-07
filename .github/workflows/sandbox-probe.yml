@@ -1,0 +1,73 @@
+# TEMPORARY SPIKE. Not part of the product. Delete after the findings are recorded
+# in docs/architecture/decisions/0007-build-the-sandbox-early.md.
+#
+# Answers, with evidence, what a GitHub-hosted runner can test for the sandbox:
+# the hardened-container baseline, gVisor, and whether KVM (needed for microVMs) exists.
+# No secrets, no third-party actions, read-only token. Image tags are unpinned on purpose
+# here; the real driver tests must pin by digest.
+name: Sandbox probe (temporary spike)
+
+on:
+  push:
+    branches: ["spike/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Host facts
+        run: |
+          echo "image: ${ImageVersion:-unknown}"
+          uname -a
+          echo "cpus: $(nproc)"; free -m | sed -n 2p
+          echo "--- /dev/kvm"; ls -l /dev/kvm 2>&1 || true
+          echo "cpu virtualisation flags (vmx/svm) count: $(grep -c -E '(vmx|svm)' /proc/cpuinfo || true)"
+          docker version --format 'docker server: {{.Server.Version}}'
+
+      - name: Hardened container baseline
+        if: always()
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m --cpus 1 \
+            --user 65534:65534 alpine:3.20 sh -c '
+              echo "uid: $(id -u)"
+              grep -E "^Cap(Eff|Bnd)" /proc/self/status
+              if touch /probe 2>/dev/null; then echo "BAD: root filesystem writable"; else echo "ok: root filesystem read-only"; fi
+              if wget -T 3 -qO /dev/null http://example.com 2>/dev/null; then echo "BAD: network reachable"; else echo "ok: no network"; fi
+            '
+
+      - name: Install gVisor (runsc)
+        if: always()
+        run: |
+          set -e
+          ARCH=$(uname -m)
+          URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
+          wget -q "${URL}/runsc" "${URL}/runsc.sha512"
+          sha512sum -c runsc.sha512
+          chmod a+rx runsc
+          sudo mv runsc /usr/local/bin/runsc
+          runsc --version
+          sudo /usr/local/bin/runsc install
+          sudo systemctl restart docker
+          docker info --format 'runtimes: {{json .Runtimes}}'
+
+      - name: Run a container under gVisor
+        if: always()
+        run: |
+          docker run --rm --runtime=runsc alpine:3.20 sh -c 'echo "uname: $(uname -a)"; dmesg 2>&1 | head -5'
+
+      - name: gVisor with the full hardened flags
+        if: always()
+        run: |
+          docker run --rm --runtime=runsc --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m --cpus 1 \
+            --user 65534:65534 alpine:3.20 sh -c '
+              echo "uid: $(id -u)"
+              if touch /probe 2>/dev/null; then echo "BAD: root filesystem writable"; else echo "ok: root filesystem read-only"; fi
+              if wget -T 3 -qO /dev/null http://example.com 2>/dev/null; then echo "BAD: network reachable"; else echo "ok: no network"; fi
+            '
