@@ -1,0 +1,37 @@
+{
+  "name": "codemugs",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Platform that understands applications, detects problems, and produces verified engineering changes.",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "smoke": "node scripts/smoke-api.mjs",
+    "verify": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm smoke",
+    "clean": "pnpm -r clean",
+    "dev:api": "pnpm --filter @codemugs/api dev",
+    "infra:up": "docker compose -f infrastructure/docker/compose.dev.yml up -d --wait",
+    "infra:down": "docker compose -f infrastructure/docker/compose.dev.yml down"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.6",
+    "eslint": "10.14.0",
+    "globals": "17.14.0",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
+  }
+}

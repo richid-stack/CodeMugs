@@ -1,0 +1,8 @@
+title = "codemugs gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local-only development credential in the dev compose file. Never used outside a developer machine."
+regexes = ['''codemugs_dev_only''']

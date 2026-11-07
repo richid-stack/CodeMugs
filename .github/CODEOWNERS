@@ -1,0 +1,11 @@
+# Default owner for everything.
+*                              @richid-stack
+
+# Security-sensitive areas. Keep a named owner on these as the team grows.
+/.github/                      @richid-stack
+/docs/security/                @richid-stack
+/infrastructure/               @richid-stack
+/packages/auth/                @richid-stack
+/packages/security/            @richid-stack
+/core/policy-engine/           @richid-stack
+/engineering/sandbox-manager/  @richid-stack

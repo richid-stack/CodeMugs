@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "docker:pinDigests"],
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "rangeStrategy": "pin",
+  "packageRules": [
+    {
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "dev dependencies (non-major)"
+    },
+    {
+      "description": "typescript-eslint does not support TypeScript 6.1+ yet. Raise this cap when it does.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6.1.0"
+    }
+  ]
+}

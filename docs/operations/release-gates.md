@@ -1,0 +1,27 @@
+# Release gates
+
+These are the conditions that must hold before the platform is called production-ready. They are gates, not polish. A gate is closed only when its **evidence** exists: a passing test, a recorded drill, a review or a measurement. Intent and design do not close a gate.
+
+Status values: `Not started`, `In progress`, `Closed`.
+
+| #   | Gate                                                         | Evidence that closes it                                                    | Status      |
+| --- | ------------------------------------------------------------ | -------------------------------------------------------------------------- | ----------- |
+| 1   | Every customer has strict tenant isolation                   | Automated cross-tenant access tests across API, storage, queues and caches | Not started |
+| 2   | All sensitive credentials are encrypted and scoped           | Review of storage and access paths; rotation exercised                     | Not started |
+| 3   | SDK ingestion handles failures and retries safely            | Fault-injection tests on buffering, retry and duplicate delivery           | Not started |
+| 4   | Event processing is idempotent and recoverable               | Replay tests; crash-recovery tests                                         | Not started |
+| 5   | All important decisions have traceable evidence              | Evidence ledger links verified for every decision type                     | Not started |
+| 6   | The engine distinguishes uncertainty from confirmed findings | Evaluation set including cases where "insufficient evidence" is correct    | Not started |
+| 7   | Agents cannot exceed their permissions                       | Adversarial tests against the policy engine                                | Not started |
+| 8   | Code execution is isolated                                   | Sandbox escape and resource-abuse tests                                    | Not started |
+| 9   | No agent has unrestricted production access                  | Access review; credentials inventory                                       | Not started |
+| 10  | Critical changes require explicit approval                   | Policy tests for payments, authentication, migrations and permissions      | Not started |
+| 11  | Engineering changes pass independent validation              | Validation runs independent of the authoring agent                         | Not started |
+| 12  | Rollbacks and recovery procedures exist                      | Documented procedures exercised in a drill                                 | Not started |
+| 13  | Platform monitoring covers the platform itself               | Dashboards and alerts for the platform; alert tests                        | Not started |
+| 14  | Backups and disaster recovery are tested                     | A restore from backup, timed and recorded                                  | Not started |
+| 15  | Data deletion and retention work correctly                   | Tests proving deletion across every store                                  | Not started |
+| 16  | Model failures and provider outages are handled              | Failover tests with provider failures injected                             | Not started |
+| 17  | Cost limits and execution budgets are enforced               | Tests that budgets halt work                                               | Not started |
+| 18  | Security and performance testing have been performed         | Reports from security testing and load tests                               | Not started |
+| 19  | Agent quality is measured using repeatable evaluations       | Evaluation suite in CI with tracked results                                | Not started |

@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "core/*"
+  - "intelligence/*"
+  - "engineering/*"
+  - "integrations/*"
+  - "packages/*"
+
+# Dependency install scripts are a supply-chain risk, so they are denied by default. A new
+# package that wants to run one shows up as a warning during install and must be reviewed
+# before it is allowed (onlyBuiltDependencies). esbuild is listed so its known warning stays
+# quiet: its binary arrives as an optional dependency and needs no install script.
+ignoredBuiltDependencies:
+  - esbuild

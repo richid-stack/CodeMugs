@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+# Build from the repository root:
+#   docker build -f infrastructure/docker/Dockerfile.api -t codemugs-api .
+ARG NODE_VERSION=22
+
+FROM node:${NODE_VERSION}-slim AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+WORKDIR /repo
+
+FROM base AS build
+COPY . .
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile
+RUN pnpm --filter @codemugs/api... build
+# Produce a self-contained production tree: the API, its built workspace dependencies,
+# and production-only node_modules.
+RUN pnpm --filter @codemugs/api --prod deploy --legacy /out
+
+FROM node:${NODE_VERSION}-slim AS runtime
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3000
+WORKDIR /app
+COPY --from=build --chown=node:node /out ./
+# Never run as root.
+USER node
+EXPOSE 3000
+# Run with `--init` (docker run) or `init: true` (compose) so signals and zombie reaping
+# are handled by a proper init process.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["node", "dist/main.js"]
