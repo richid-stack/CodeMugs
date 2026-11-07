@@ -44,22 +44,16 @@ jobs:
       - name: Install gVisor (runsc)
         if: always()
         run: |
-          ARCH=$(uname -m)
-          URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
-          echo "--- diagnostics: HTTP status per candidate URL"
-          for u in "${URL}/runsc" "${URL}/runsc.sha512" \
-            https://storage.googleapis.com/gvisor/releases/release/latest \
-            https://gvisor.dev/archive.key; do
-            printf '%s -> ' "$u"; curl -sS -o /dev/null -L -w '%{http_code}\n' "$u" || echo "curl failed"
-          done
           set -e
-          curl -fSL -o runsc "${URL}/runsc"
-          curl -fSL -o runsc.sha512 "${URL}/runsc.sha512"
-          sha512sum -c runsc.sha512
-          chmod a+rx runsc
-          sudo mv runsc /usr/local/bin/runsc
+          # Signed apt repository, as described in the gVisor install guide.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq runsc
           runsc --version
-          sudo /usr/local/bin/runsc install
+          sudo runsc install
           sudo systemctl restart docker
           docker info --format 'runtimes: {{json .Runtimes}}'
 
