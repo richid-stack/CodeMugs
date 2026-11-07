@@ -10,7 +10,11 @@ Collecting errors is not understanding an application. The product builds a stru
 
 ## Who it is for
 
-Software companies that would trust it with production systems. The first application it will serve is OpenLobs.
+**Direction (owner):** everyone, and especially companies that use software to run their business. The product speaks English.
+
+**Working constraint (draft, to be confirmed):** the platform needs read access to an application's source code and a way to ship changes to it. The organisations it can serve are therefore those that build or maintain their own software, including internal engineering teams inside non-software businesses such as retailers, banks and logistics firms. A company that only buys software, and has neither the code nor a deployment path, is outside what the engine can act on. It can still be reached later through the vendors that build the software it uses.
+
+**First application:** OpenLobs. The first outside customers are chosen in the open questions below.
 
 ## What it does
 
@@ -49,11 +53,16 @@ From outcome tracking: was the diagnosis correct, did the fix work, did tests ca
 - Any compliance claim before the controls exist and have been audited.
 - Broad connector coverage. The connector list in the architecture is a set of examples, not commitments.
 - Unattended changes to high-risk areas.
+- Human languages other than English (interface, documentation, agent output and customer communications). Localisation waits until after the first milestone.
+
+## Decided
+
+- The product's human language is English. Recorded from the owner. This assumes "English" refers to the human language, not to programming languages.
 
 ## Open questions
 
-- Who is the first target customer segment, and who inside those companies approves and uses the product?
-- Which languages and frameworks must the first milestone support?
+- Within the stated direction (everyone who builds or runs software), which segment is first after OpenLobs, and who inside those companies approves and uses the product? "Everyone" is the direction, not a first release: the first milestone needs one narrow, reachable group of design partners.
+- Which programming languages and frameworks must the first milestone support? Proposal: start with the languages OpenLobs uses, then widen. Each language needs its own parser and analyser, so breadth is expensive.
 - What autonomy level is the default for a new customer?
 - What is the pricing model? It determines what must be metered.
 - What does "verified" mean for a customer whose application has little or no test coverage?

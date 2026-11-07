@@ -27,6 +27,7 @@ Most directories are placeholders. Read a module's `README.md` and check its **S
 5. Validation of a change is independent of the agent that made it.
 6. Server errors never expose internals to callers.
 7. Make no compliance or production-readiness claim unless the evidence exists (`docs/operations/release-gates.md`).
+8. Customer code, and anything built from it, never runs outside the sandbox. That includes repository analysis (`docs/architecture/decisions/0007-build-the-sandbox-early.md`).
 
 ## Conventions
 

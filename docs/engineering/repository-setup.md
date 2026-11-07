@@ -10,6 +10,14 @@ A checklist of settings to apply when the repository is created. Menu names chan
 
 ## Branch protection (Settings, Rules)
 
+> **Status: not applied.** Attempted on 2026-11-07. For this private repository, both the rulesets API and the classic branch protection API answered `403: Upgrade to GitHub Pro or make this repository public to enable this feature`. Separately, the session's proxy refused the write call. Options:
+>
+> 1. Upgrade the owner account to GitHub Pro (or move the repository to an organisation on a paid plan), then apply the ruleset below in the web interface.
+> 2. Make the repository public. Not advised while the project is proprietary and pre-alpha.
+> 3. Until protection is enforceable, work by convention: changes go through pull requests and CI must be green before merging. Nothing enforces this, and the first commits went straight to `main`.
+>
+> Related security features for private repositories (secret scanning, push protection, code scanning) are plan-dependent too. See the next section.
+
 Protect `main` with a ruleset that:
 
 - [ ] Requires a pull request before merging.
