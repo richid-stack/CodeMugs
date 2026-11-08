@@ -17,6 +17,37 @@ jobs:
     name: Build, typecheck, lint, test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Two PostgreSQL majors, because both are supported (ADR 0009). Disposable, CI-only
+    # credentials: the same throwaway value as the dev compose file.
+    services:
+      postgres18:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: codemugs_dev_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      postgres17:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: codemugs_dev_only
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # A missing database must fail the run, never skip the isolation tests silently.
+      REQUIRE_DATABASE_TESTS: "true"
+      CODEMUGS_TEST_DATABASE_URL: postgres://postgres:codemugs_dev_only@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -29,7 +60,12 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
-      - run: pnpm test
+      - name: Test (PostgreSQL 18)
+        run: pnpm test
+      - name: Storage tests (PostgreSQL 17)
+        run: pnpm --filter @codemugs/storage test
+        env:
+          CODEMUGS_TEST_DATABASE_URL: postgres://postgres:codemugs_dev_only@localhost:5433/postgres
       - run: pnpm smoke
 
   audit:

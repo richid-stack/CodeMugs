@@ -1,0 +1,7 @@
+export { MigrationError, TenantContextError } from "./errors.js";
+export { defaultMigrationsDirectory, loadMigrations, runMigrations } from "./migrate.js";
+export type { Migration } from "./migrate.js";
+export { createPool } from "./pool.js";
+export type { PoolOptions } from "./pool.js";
+export { withTenant } from "./tenant.js";
+export type { TenantClient } from "./tenant.js";

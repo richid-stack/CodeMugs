@@ -6,7 +6,7 @@ Status values: `Not started`, `In progress`, `Closed`.
 
 | #   | Gate                                                         | Evidence that closes it                                                                                                                                                               | Status      |
 | --- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| 1   | Every customer has strict tenant isolation                   | Automated cross-tenant access tests across API, storage, queues and caches                                                                                                            | Not started |
+| 1   | Every customer has strict tenant isolation                   | Automated cross-tenant access tests across API, storage, queues and caches                                                                                                            | In progress |
 | 2   | All sensitive credentials are encrypted and scoped           | Review of storage and access paths; rotation exercised                                                                                                                                | Not started |
 | 3   | SDK ingestion handles failures and retries safely            | Fault-injection tests on buffering, retry and duplicate delivery                                                                                                                      | Not started |
 | 4   | Event processing is idempotent and recoverable               | Replay tests; crash-recovery tests                                                                                                                                                    | Not started |
@@ -25,3 +25,7 @@ Status values: `Not started`, `In progress`, `Closed`.
 | 17  | Cost limits and execution budgets are enforced               | Tests that budgets halt work                                                                                                                                                          | Not started |
 | 18  | Security and performance testing have been performed         | Reports from security testing and load tests                                                                                                                                          | Not started |
 | 19  | Agent quality is measured using repeatable evaluations       | Evaluation suite in CI with tracked results                                                                                                                                           | Not started |
+
+## Progress notes
+
+- **Gate 1.** The storage layer has cross-tenant tests against a real PostgreSQL, a schema guard and a canary ([ADR 0006](../architecture/decisions/0006-tenant-isolation.md)). The API, queue and cache layers do not exist yet, query overhead is unmeasured, and behaviour behind an external pooler is untested, so the gate stays open.
