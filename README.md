@@ -77,4 +77,4 @@ Details: [architecture overview](docs/architecture/overview.md) and [decision re
 
 ## License
 
-Proprietary. Copyright (c) 2026 Richard Mensah, all rights reserved. See [LICENSE](LICENSE). The code can be read, but no licence is granted to use, copy, modify or distribute it (`"license": "UNLICENSED"` in `package.json`). The longer-term approach is an open question, see [gap 17](docs/architecture/open-questions.md).
+Source-available under the Functional Source License (FSL-1.1-ALv2), Copyright 2026 Richard Mensah. The full text is in [LICENSE](LICENSE). You may use, copy, modify and redistribute the code for any purpose except a Competing Use: offering it to others as a commercial product or service that substitutes for it or does the same job. Internal use, non-commercial education and non-commercial research are permitted. Each version converts to the Apache License 2.0 on the second anniversary of its release. This is **not** an open-source licence. The reasoning is in [ADR 0008](docs/architecture/decisions/0008-functional-source-license.md).

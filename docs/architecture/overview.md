@@ -67,7 +67,7 @@ A modular monolith with separate workers and isolated execution infrastructure, 
 
 ## Independence from OpenLobs
 
-This platform has its own identity and repository. OpenLobs is intended to become the first deeply integrated application, not a dependency.
+This platform has its own identity and repository. OpenLobs is the owner's assistant product. CodeMugs is intended to be built into it, but only much later. Until then OpenLobs plays no part in the design, testing or data, and nothing here depends on it.
 
 ## Decisions
 

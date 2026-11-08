@@ -20,7 +20,7 @@ Isolation added after code paths already exist is how escapes and credential lea
 4. **Drivers sit behind one interface** (`engineering/sandbox-manager`), so the isolation technology can change without touching callers:
    - First driver: a hardened container. Non-root, read-only root filesystem, all capabilities dropped, no privilege escalation, default seccomp profile, no host mounts and no container runtime socket, network disabled unless the policy allows it.
    - Evaluated in Phase 2: gVisor as the container runtime, and a microVM (Firecracker or Kata Containers) for the hosted multi-tenant tier. A managed sandbox service can be a driver too if it passes the same tests and its data handling is acceptable.
-5. **Hardened containers alone are not enough for hostile third-party code.** Containers share the host kernel, so a kernel escape reaches the host. A hardened container is acceptable for development, our own code and first-party code such as OpenLobs. Before the hosted service runs a third-party customer's code, a stronger driver must pass the escape and resource-abuse tests that close release gate 8.
+5. **Hardened containers alone are not enough for hostile third-party code.** Containers share the host kernel, so a kernel escape reaches the host. A hardened container is acceptable for development, our own code and other first-party code we control. Before the hosted service runs a third-party customer's code, a stronger driver must pass the escape and resource-abuse tests that close release gate 8.
 6. **Agent runtimes run inside the sandbox** (ADR 0003). Their credentials, network and filesystem are whatever the policy grants, nothing more.
 
 ## Consequences
