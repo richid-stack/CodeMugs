@@ -1,5 +1,6 @@
 import { ConfigError, loadApiConfig } from "@codemugs/configuration";
 import { buildApp } from "./app.js";
+import { createDatabaseServices } from "./database.js";
 
 async function main(): Promise<void> {
   let config;
@@ -15,7 +16,25 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const { app, health } = await buildApp({ config });
+  // The pool can report an error before the logger exists, so the reporter is set afterwards.
+  let reportDatabaseError: (error: Error) => void = () => undefined;
+  const database =
+    config.databaseUrl === undefined
+      ? undefined
+      : createDatabaseServices(config.databaseUrl, {
+          onError: (error) => reportDatabaseError(error),
+        });
+
+  // Without a database (allowed outside production) there is no way to authenticate, so every
+  // /v1 route answers 503 instead of guessing.
+  const { app, health } = await buildApp({
+    config,
+    readinessChecks: database === undefined ? [] : [database.readiness],
+    ...(database === undefined ? {} : { authenticator: database.authenticate }),
+  });
+  reportDatabaseError = (error) => {
+    app.log.error({ err: error }, "database connection error");
+  };
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -34,6 +53,8 @@ async function main(): Promise<void> {
 
     try {
       await app.close();
+      // After the server has drained, so in-flight requests keep their connections.
+      await database?.close();
       app.log.info("shutdown complete");
     } catch (error) {
       app.log.error({ err: error }, "error during shutdown");

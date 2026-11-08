@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import helmet from "@fastify/helmet";
 import type { ApiConfig } from "@codemugs/configuration";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { Authenticator } from "./authentication.js";
 import { registerHealthRoutes, type HealthState, type ReadinessCheck } from "./routes/health.js";
+import { registerV1Routes } from "./routes/v1.js";
 
 // Callers may supply a request id for cross-service tracing, but only in a safe shape.
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
@@ -10,6 +12,10 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 export interface BuildAppOptions {
   config: ApiConfig;
   readinessChecks?: readonly ReadinessCheck[];
+  /** Decides who an API key belongs to. Without one, every /v1 route answers 503. */
+  authenticator?: Authenticator;
+  /** Where log lines go. For tests that need to read them; production logs to stdout. */
+  logStream?: { write(line: string): void };
 }
 
 export interface BuiltApp {
@@ -20,6 +26,8 @@ export interface BuiltApp {
 export async function buildApp({
   config,
   readinessChecks = [],
+  authenticator,
+  logStream,
 }: BuildAppOptions): Promise<BuiltApp> {
   const app = Fastify({
     logger: {
@@ -28,6 +36,7 @@ export async function buildApp({
         paths: ["req.headers.authorization", "req.headers.cookie", 'req.headers["x-api-key"]'],
         censor: "[redacted]",
       },
+      ...(logStream === undefined ? {} : { stream: logStream }),
     },
     bodyLimit: config.bodyLimitBytes,
     genReqId: (request) => {
@@ -39,6 +48,10 @@ export async function buildApp({
   });
 
   await app.register(helmet);
+
+  // Where an authenticated request keeps its caller (see authentication.ts). Starts empty on
+  // every request.
+  app.decorateRequest("principal", null);
 
   app.addHook("onSend", (request, reply, _payload, done) => {
     void reply.header("x-request-id", request.id);
@@ -70,6 +83,8 @@ export async function buildApp({
 
   const health: HealthState = { shuttingDown: false };
   registerHealthRoutes(app, { checks: readinessChecks, state: health });
+  // After the error handler is set, so the routes in this scope inherit it.
+  registerV1Routes(app, { authenticator });
 
   return { app, health };
 }
