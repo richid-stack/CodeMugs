@@ -9,7 +9,7 @@
 
 ## Outside contributions
 
-Not accepted yet. The licence terms and a contributor agreement (CLA) have to be settled first, see [open question 17](docs/architecture/open-questions.md). Issues and security reports are welcome.
+Not accepted yet. The licence is settled (the [Functional Source License](LICENSE)), but a contributor agreement (CLA) has to be set up first so that contributed code can be licensed the same way, see [open question 17](docs/architecture/open-questions.md). Issues and security reports are welcome.
 
 ## Commits
 

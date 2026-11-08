@@ -14,7 +14,7 @@ Collecting errors is not understanding an application. The product builds a stru
 
 **Working constraint (draft, to be confirmed):** the platform needs read access to an application's source code and a way to ship changes to it. The organisations it can serve are therefore those that build or maintain their own software, including internal engineering teams inside non-software businesses such as retailers, banks and logistics firms. A company that only buys software, and has neither the code nor a deployment path, is outside what the engine can act on. It can still be reached later through the vendors that build the software it uses.
 
-**First application:** OpenLobs. The first outside customers are chosen in the open questions below.
+**First test subjects:** CodeMugs's own repository and a purpose-built demo application with deliberately seeded faults. OpenLobs, the owner's assistant product, is a much later integration target and plays no part now. The first outside customers are chosen in the open questions below.
 
 ## What it does
 
@@ -61,8 +61,8 @@ From outcome tracking: was the diagnosis correct, did the fix work, did tests ca
 
 ## Open questions
 
-- Within the stated direction (everyone who builds or runs software), which segment is first after OpenLobs, and who inside those companies approves and uses the product? "Everyone" is the direction, not a first release: the first milestone needs one narrow, reachable group of design partners.
-- Which programming languages and frameworks must the first milestone support? The original brief starts the SDKs with JavaScript/TypeScript and Python, selects test tooling per customer language, and says to expand to more languages after the first milestone. **Proposal (draft, owner to confirm):** the first milestone supports JavaScript/TypeScript applications on Node only, with Python second. One language keeps the whole loop (parse, run tests, change, verify) reliable, and it lets CodeMugs analyse its own repository as the first test subject. The brief does not say which language OpenLobs uses. If it is neither, that takes priority. Each language needs its own parser, analyser and test runner, so breadth is expensive.
+- Within the stated direction (everyone who builds or runs software), which segment is the first design partner, and who inside those companies approves and uses the product? "Everyone" is the direction, not a first release: the first milestone needs one narrow, reachable group of design partners.
+- Which programming languages and frameworks must the first milestone support? The original brief starts the SDKs with JavaScript/TypeScript and Python, selects test tooling per customer language, and says to expand to more languages after the first milestone. **Proposal (draft, owner to confirm):** the first milestone supports JavaScript/TypeScript applications on Node only, with Python second. One language keeps the whole loop (parse, run tests, change, verify) reliable, and it lets CodeMugs analyse its own repository as the first test subject. Each language needs its own parser, analyser and test runner, so breadth is expensive.
 - What autonomy level is the default for a new customer?
 - What is the pricing model? It determines what must be metered.
 - What does "verified" mean for a customer whose application has little or no test coverage?
