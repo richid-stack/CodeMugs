@@ -14,6 +14,8 @@ pnpm dev:api      # run the API with reload
 pnpm infra:up     # Postgres and Redis locally (needs Docker)
 ```
 
+Database tests (`packages/storage`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
+
 ## Layout
 
 Most directories are placeholders. Read a module's `README.md` and check its **Status** line before assuming code exists. A new module needs its own `package.json`; the pnpm workspace picks it up automatically. Check the relevant decision records in `docs/architecture/decisions/` before building.

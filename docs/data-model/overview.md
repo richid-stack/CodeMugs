@@ -1,10 +1,10 @@
 # Data model overview (draft)
 
-> **Draft.** No schema or migrations exist yet. This establishes the groupings and the rules every table must follow. Field-level design happens table by table, starting with tenancy.
+> **Draft.** Only the tenancy foundation exists as a schema: `organisations` and `projects`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
 
 ## Rules for every table
 
-- **Tenant-owned rows carry `organisation_id`**, non-null, and it participates in foreign keys and unique constraints so a row can never point at another tenant's data. See [ADR 0006](../architecture/decisions/0006-tenant-isolation.md) (proposed).
+- **Tenant-owned rows carry `organisation_id`**, non-null, and it participates in foreign keys and unique constraints so a row can never point at another tenant's data. Every table also has forced row-level security. See [ADR 0006](../architecture/decisions/0006-tenant-isolation.md).
 - **Tenant identity comes from the authenticated credential**, never from a payload.
 - **Credentials are never stored in the application database in usable form.** The database holds references to secrets managed by a KMS or vault. API keys are stored hashed.
 - **Audit records are append-only.**
