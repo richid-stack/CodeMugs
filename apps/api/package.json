@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@fastify/helmet": "13.2.0",
+    "@codemugs/auth": "workspace:*",
     "@codemugs/configuration": "workspace:*",
+    "@codemugs/storage": "workspace:*",
     "fastify": "5.12.8"
   }
 }

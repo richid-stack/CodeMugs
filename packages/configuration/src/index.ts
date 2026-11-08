@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { Secret } from "./secret.js";
+
+export { Secret } from "./secret.js";
 
 /**
  * Thrown when environment configuration is invalid.
@@ -45,6 +48,19 @@ const apiEnvSchema = z
       .default("info"),
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(0).default(10_000),
     BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+    // Connection string for the restricted application role (never the migration role). An
+    // empty value counts as unset. The messages below never include the value.
+    DATABASE_URL: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z
+        .string()
+        .regex(/^postgres(ql)?:\/\//, "must be a postgres:// or postgresql:// URL")
+        .optional(),
+    ),
+  })
+  .refine((env) => env.NODE_ENV !== "production" || env.DATABASE_URL !== undefined, {
+    path: ["DATABASE_URL"],
+    message: "is required when NODE_ENV is production",
   })
   .transform((env) => ({
     nodeEnv: env.NODE_ENV,
@@ -53,6 +69,8 @@ const apiEnvSchema = z
     logLevel: env.LOG_LEVEL,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
     bodyLimitBytes: env.BODY_LIMIT_BYTES,
+    /** Wrapped so logging the whole configuration cannot reveal it. Call `reveal()` to use it. */
+    databaseUrl: env.DATABASE_URL === undefined ? undefined : new Secret(env.DATABASE_URL),
   }));
 
 export type ApiConfig = z.output<typeof apiEnvSchema>;

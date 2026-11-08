@@ -1,9 +1,12 @@
 // Smoke test for the built API. Run `pnpm build` first, then `pnpm smoke`.
 //
 // Starts the compiled server on a free port and checks health, readiness and the 404 shape.
-// Then verifies that SIGTERM produces a clean, timely exit, and that invalid configuration
-// fails fast without echoing the rejected value.
+// Then verifies that SIGTERM produces a clean, timely exit, that invalid configuration fails fast
+// without echoing the rejected value, and that /v1 refuses to guess who is calling when it has no
+// working database. None of this needs a database; the database-backed paths are covered by the
+// integration tests.
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { createServer } from "node:net";
@@ -40,7 +43,15 @@ async function freePort() {
 
 function startServer(env) {
   const child = spawn(process.execPath, [entry], {
-    env: { ...process.env, NODE_ENV: "test", LOG_LEVEL: "silent", HOST: "127.0.0.1", ...env },
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      LOG_LEVEL: "silent",
+      HOST: "127.0.0.1",
+      // Empty means unset, so a developer's own database is never used by accident.
+      DATABASE_URL: "",
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -79,6 +90,11 @@ async function waitUntilHealthy(baseUrl, server) {
   return false;
 }
 
+/** A key in the right shape that was never issued. */
+function fakeKey() {
+  return `cmk_${randomUUID().replaceAll("-", "")}_${randomUUID().replaceAll("-", "")}_${"c".repeat(43)}`;
+}
+
 async function checkNormalOperation() {
   console.log("server starts, serves requests and shuts down gracefully");
   const port = await freePort();
@@ -106,6 +122,17 @@ async function checkNormalOperation() {
       "unknown routes return the structured 404 with a request id",
     );
     check(missing.headers.get("x-content-type-options") === "nosniff", "security headers are set");
+
+    // No database is configured, so there is nothing to check a key against. Even a request that
+    // presents a key must be refused rather than waved through.
+    for (const headers of [{}, { authorization: `Bearer ${fakeKey()}` }]) {
+      const whoami = await fetch(`${baseUrl}/v1/whoami`, { headers });
+      const whoamiBody = await whoami.json();
+      check(
+        whoami.status === 503 && whoamiBody.error?.code === "authentication_unavailable",
+        `GET /v1/whoami ${Object.keys(headers).length === 0 ? "without" : "with"} a key answers 503 when no database is configured`,
+      );
+    }
 
     server.child.kill("SIGTERM");
     const result = await withTimeout(server.closed, SHUTDOWN_TIMEOUT_MS, "graceful shutdown");
@@ -140,6 +167,87 @@ async function checkInvalidConfiguration() {
   }
 }
 
+async function checkInvalidDatabaseUrl() {
+  console.log("an invalid DATABASE_URL fails fast without echoing it");
+  const rejectedValue = "smoke-test-not-a-url-with-password-hunter2";
+  const server = startServer({ PORT: "0", DATABASE_URL: rejectedValue });
+
+  try {
+    const result = await withTimeout(server.closed, STARTUP_TIMEOUT_MS, "startup failure");
+    const output = server.output();
+    check(result.code === 1, `exits with code 1 (code=${result.code})`);
+    check(output.includes("DATABASE_URL"), "names the offending variable");
+    check(!output.includes(rejectedValue), "does not echo the rejected value");
+    check(!output.includes("hunter2"), "does not echo any part of the rejected value");
+  } finally {
+    server.child.kill("SIGKILL");
+  }
+}
+
+async function checkProductionRequiresDatabase() {
+  console.log("production refuses to start without a database");
+  const server = startServer({ PORT: "0", NODE_ENV: "production" });
+
+  try {
+    const result = await withTimeout(server.closed, STARTUP_TIMEOUT_MS, "startup failure");
+    check(result.code === 1, `exits with code 1 (code=${result.code})`);
+    check(server.output().includes("DATABASE_URL"), "names the missing variable");
+  } finally {
+    server.child.kill("SIGKILL");
+  }
+}
+
+async function checkUnreachableDatabase() {
+  console.log("an unreachable database is reported as unavailable, never as a bad key");
+  // Random per run, so there is no password-shaped literal in the source for a secret scanner
+  // to flag, and it cannot match anything by accident.
+  const password = `probe-${randomUUID()}`;
+  const port = await freePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  // Port 1 refuses connections at once.
+  const server = startServer({
+    PORT: String(port),
+    // Logging is on here so the check on the output below has something to look at.
+    LOG_LEVEL: "info",
+    DATABASE_URL: `postgres://codemugs_app:${password}@127.0.0.1:1/codemugs`,
+  });
+
+  try {
+    const healthy = await waitUntilHealthy(baseUrl, server);
+    check(healthy, "still starts and reports liveness");
+    if (!healthy) {
+      console.error(server.output());
+      return;
+    }
+
+    const ready = await fetch(`${baseUrl}/readyz`);
+    const readyBody = await ready.json();
+    check(
+      ready.status === 503 && readyBody.checks?.database === "fail",
+      "GET /readyz reports the database as failed",
+    );
+
+    const whoami = await fetch(`${baseUrl}/v1/whoami`, {
+      headers: { authorization: `Bearer ${fakeKey()}` },
+    });
+    const text = await whoami.text();
+    check(whoami.status === 500, `GET /v1/whoami answers 500, not 401 (status=${whoami.status})`);
+    check(
+      !text.includes(password) && !text.includes("127.0.0.1") && !text.includes("ECONNREFUSED"),
+      "the error response exposes nothing about the database",
+    );
+    // Wait for the line about the failed request, so the check below cannot pass on empty output.
+    const deadline = Date.now() + 2_000;
+    while (!server.output().includes("unhandled error") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    check(server.output().includes("unhandled error"), "the failure is logged for operators");
+    check(!server.output().includes(password), "the password never reaches the process output");
+  } finally {
+    server.child.kill("SIGKILL");
+  }
+}
+
 if (!existsSync(entry)) {
   console.error(`${entry} not found. Run \`pnpm build\` first.`);
   process.exit(1);
@@ -148,6 +256,9 @@ if (!existsSync(entry)) {
 try {
   await checkNormalOperation();
   await checkInvalidConfiguration();
+  await checkInvalidDatabaseUrl();
+  await checkProductionRequiresDatabase();
+  await checkUnreachableDatabase();
 } catch (error) {
   check(false, `unexpected error: ${error instanceof Error ? error.message : String(error)}`);
 }

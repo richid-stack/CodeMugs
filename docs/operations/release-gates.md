@@ -28,4 +28,4 @@ Status values: `Not started`, `In progress`, `Closed`.
 
 ## Progress notes
 
-- **Gate 1.** The storage layer has cross-tenant tests against a real PostgreSQL, a schema guard and a canary ([ADR 0006](../architecture/decisions/0006-tenant-isolation.md)). The API, queue and cache layers do not exist yet, query overhead is unmeasured, and behaviour behind an external pooler is untested, so the gate stays open.
+- **Gate 1.** The storage layer has cross-tenant tests against a real PostgreSQL, a schema guard and a canary ([ADR 0006](../architecture/decisions/0006-tenant-isolation.md)). The API, queue and cache layers do not exist yet, query overhead is unmeasured, and behaviour behind an external pooler is untested, so the gate stays open. The API now takes the tenant only from the authenticated key: a test with a real database shows each key sees only its own organisation and that tenant ids in headers or the query string are ignored. It has no tenant-scoped data routes yet, so that is a first step towards cross-tenant tests of the API, not those tests.

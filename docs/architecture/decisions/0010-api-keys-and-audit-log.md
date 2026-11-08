@@ -34,7 +34,7 @@
 - **Audit integrity has limits.** Privileges and triggers protect against the application and against mistakes. A database administrator can disable the triggers, and there is no hash chain or external copy to make tampering detectable.
 - **Organisations cannot be deleted** while audit entries reference them. Retention, deletion and offboarding ([open question 4](../open-questions.md)) need a designed, audited privileged path that does not exist yet.
 - **The audit schema is not final.** Operator and break-glass access ([open question 3](../open-questions.md)) is undecided. The `operator` actor type lets such actions be recorded, but the fields it needs (approval, expiry, customer visibility) may change the schema.
-- **Not recorded:** failed authentication (there is no tenant to attribute it to, and recording it would let unauthenticated callers write rows) and successful authentication (volume). Operational logging of failures comes with the API.
+- **Not recorded:** failed authentication (there is no tenant to attribute it to, and recording it would let unauthenticated callers write rows) and successful authentication (volume). The API logs that an authentication failed, without the reason or the key, in the operational log (not the audit log), and carries the caller's ids on the log lines of authenticated requests.
 
 ## Alternatives considered
 

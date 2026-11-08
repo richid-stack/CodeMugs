@@ -5,7 +5,8 @@ Typed, validated environment configuration.
 **Status:** Phase 1 · Foundation (started)
 
 - `parseEnv(schema, env)` validates an environment object against a zod schema and throws `ConfigError` on failure.
-- `loadApiConfig(env)` returns the API's configuration with safe defaults.
+- `loadApiConfig(env)` returns the API's configuration with safe defaults. `DATABASE_URL` is optional outside production and required in production.
+- `Secret` wraps a value (the database URL, later tokens) so it cannot be printed, logged or serialised by accident: string conversion, `JSON.stringify` and `util.inspect` all give `[redacted]`, and the value is only available through an explicit `reveal()`. It does not stop code that reveals a value and then prints it.
 
 `ConfigError` messages list the offending variable names and the reason, and never the rejected values, so a mistyped secret cannot end up in a log. This is covered by a test.
 

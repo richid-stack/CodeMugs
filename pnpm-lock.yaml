@@ -38,9 +38,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@codemugs/configuration':
         specifier: workspace:*
         version: link:../../packages/configuration
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@fastify/helmet':
         specifier: 13.2.0
         version: 13.2.0
