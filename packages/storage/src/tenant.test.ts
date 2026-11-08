@@ -83,6 +83,15 @@ describe("withTenant", () => {
     expect(fake.released).toEqual([false]);
   });
 
+  it("tells the work which organisation it is acting for", async () => {
+    const fake = fakePool();
+    const organisationId = randomUUID();
+    const seen = await withTenant(fake.pool, organisationId, (client) =>
+      Promise.resolve(client.organisationId),
+    );
+    expect(seen).toBe(organisationId);
+  });
+
   it("rolls back, rethrows the original error and releases when the work fails", async () => {
     const fake = fakePool();
     const failure = new Error("boom");
