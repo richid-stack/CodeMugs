@@ -51,7 +51,7 @@ Each step is one or more small pull requests that end with evidence: a test that
 
 1. **Housekeeping.** Licence applied ([ADR 0008](../architecture/decisions/0008-functional-source-license.md)), OpenLobs removed as a design driver, this plan recorded. S
 2. **Database foundation and tenant isolation.** Done. PostgreSQL 17 and 18 are supported and `pg` with hand-written SQL is used ([ADR 0009](../architecture/decisions/0009-data-access-and-migrations.md)). Migrations, the first tenant-scoped tables with row-level security, and cross-tenant tests that fail when isolation is removed settle [ADR 0006](../architecture/decisions/0006-tenant-isolation.md). Still open, and keeping release gate 1 open: measuring overhead and testing behind a pooler. M
-3. **Identity.** Organisations, projects, hashed API keys, tenant taken from the credential only, an append-only audit log. M
+3. **Identity.** Organisations, projects, hashed API keys, tenant taken from the credential only, an append-only audit log. In progress: the database and library part exists (project API keys, an append-only audit log, authentication that finds a key only inside the organisation it claims; see [ADR 0010](../architecture/decisions/0010-api-keys-and-audit-log.md)). Authentication in the API is next. M
 4. **Ingestion.** `POST /v1/events` with idempotency, fast acknowledgement, PostgreSQL-backed jobs, replay and crash-recovery tests. M
 5. **Sandbox foundation** (in parallel with steps 2 to 4). Policy model and driver interface, hardened container driver, gVisor driver, first escape and resource-abuse tests in CI, versions pinned. L
 6. **The demo application.** A small TypeScript application with deliberately seeded faults, used as the test subject and as the first labelled incidents. S

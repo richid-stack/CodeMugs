@@ -9,6 +9,8 @@ const organisationIdSchema = z.uuid();
  * It stops working the moment the transaction ends.
  */
 export interface TenantClient {
+  /** The organisation this transaction acts for. Read-only, and the same one row-level security uses. */
+  readonly organisationId: string;
   query<R extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: unknown[],
@@ -41,6 +43,7 @@ export async function withTenant<T>(
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.organisation_id', $1, true)", [parsed.data]);
     const scoped: TenantClient = {
+      organisationId: parsed.data,
       query<R extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
         if (!active) {
           return Promise.reject(new TenantContextError("the tenant transaction has ended"));

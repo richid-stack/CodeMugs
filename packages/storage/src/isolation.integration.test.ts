@@ -431,6 +431,14 @@ describeDatabase("the isolation checks themselves (canary)", () => {
       CREATE TABLE no_tenant_column (id int PRIMARY KEY);
       CREATE VIEW leaky_view AS SELECT * FROM leaky;
       GRANT SELECT ON leaky_view TO ${APP_ROLE};
+      CREATE UNIQUE INDEX leaky_note_unique ON leaky (note);
+      CREATE TABLE child (
+        id int PRIMARY KEY,
+        organisation_id uuid NOT NULL,
+        leaky_id uuid REFERENCES leaky (id)
+      );
+      CREATE TABLE audit_log (id int PRIMARY KEY, organisation_id uuid NOT NULL);
+      GRANT SELECT, INSERT, UPDATE ON audit_log TO ${APP_ROLE};
     `);
     await admin.query("INSERT INTO leaky (organisation_id, note) VALUES ($1, 'a'), ($2, 'b')", [
       orgA,
@@ -457,6 +465,9 @@ describeDatabase("the isolation checks themselves (canary)", () => {
         `${APP_ROLE} can TRUNCATE table leaky`,
         "table no_tenant_column has no organisation_id column",
         "view leaky_view is not security_invoker and would bypass row-level security",
+        "unique index leaky_note_unique on leaky does not include organisation_id",
+        "foreign key child_leaky_id_fkey from child to leaky does not include organisation_id on both sides",
+        `table audit_log is append-only but ${APP_ROLE} can update or delete it`,
       ]),
     );
   });

@@ -14,7 +14,7 @@ pnpm dev:api      # run the API with reload
 pnpm infra:up     # Postgres and Redis locally (needs Docker)
 ```
 
-Database tests (`packages/storage`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
+Database tests (`packages/storage` and `packages/auth`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
 
 ## Layout
 

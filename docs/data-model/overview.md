@@ -1,13 +1,13 @@
 # Data model overview (draft)
 
-> **Draft.** Only the tenancy foundation exists as a schema: `organisations` and `projects`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
+> **Draft.** Only the tenancy and identity foundation exists as a schema: `organisations`, `projects`, `api_keys` and `audit_log`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
 
 ## Rules for every table
 
 - **Tenant-owned rows carry `organisation_id`**, non-null, and it participates in foreign keys and unique constraints so a row can never point at another tenant's data. Every table also has forced row-level security. See [ADR 0006](../architecture/decisions/0006-tenant-isolation.md).
 - **Tenant identity comes from the authenticated credential**, never from a payload.
-- **Credentials are never stored in the application database in usable form.** The database holds references to secrets managed by a KMS or vault. API keys are stored hashed.
-- **Audit records are append-only.**
+- **Credentials are never stored in the application database in usable form.** The database holds references to secrets managed by a KMS or vault. API keys are stored hashed: `api_keys` holds the SHA-256 of a key's secret and never the key ([ADR 0010](../architecture/decisions/0010-api-keys-and-audit-log.md)).
+- **Audit records are append-only.** `audit_log` allows the application to insert and read only, and triggers stop updates, deletes and truncation even for privileged roles. A database administrator can still disable the triggers.
 - **Every store supports deletion and retention** from the first migration. See [data classification](../security/data-classification.md).
 - **High-volume telemetry does not live in the primary database for long.** See [ADR 0005](../architecture/decisions/0005-modular-monolith-and-postgres-first-storage.md).
 
