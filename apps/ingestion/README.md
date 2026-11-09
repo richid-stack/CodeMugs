@@ -2,7 +2,7 @@
 
 Validates events and records them durably. A library for now, used by the [API](../api/README.md) for `POST /v1/events`. A separate gateway process (the OpenTelemetry endpoint, its own scaling) is planned and can use the same code.
 
-**Status:** Phase 1 · Foundation (started). Validation and storage exist. Processing events (jobs, workers, replay), redaction, rate limits and quotas do not. Decision: [ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md).
+**Status:** Phase 1 · Foundation (started). Validation and storage exist. Processing events (connecting ingestion to the [job queue](../../packages/jobs/README.md), replay on the real path), redaction, rate limits and quotas do not. Decision: [ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md).
 
 ## Interface
 

@@ -27,7 +27,7 @@ Defence in depth in the primary PostgreSQL database. This is implemented in `pac
 ## Consequences
 
 - Connection pooling must set the tenant per transaction and never leak it between requests. `withTenant` does this, and tests cover reuse of a single connection, a failed transaction, and 60 concurrent requests over two connections.
-- Workers and scheduled jobs need an explicit tenant context. "System" operations are a separate, audited path that does not exist yet.
+- Workers and scheduled jobs need an explicit tenant context. The one deliberate exception is the job queue: a second role, `codemugs_dispatcher`, can see the `jobs` table across tenants so a worker can find the next job, and nothing else ([ADR 0012](0012-jobs-and-cross-tenant-claiming.md)). Everything a job does still runs in its tenant's transaction as `codemugs_app`. Other "system" operations are a separate, audited path that does not exist yet.
 - **Row-level security does not defend against code that chooses the wrong tenant.** The tenant is a session setting, so code that can run its own SQL as `codemugs_app` can set a different one. A test pins this down so nobody assumes more. The protection is against forgotten filters and leaks between requests. That is why the tenant must come only from the authenticated credential (invariant 1).
 - Superusers and roles with `BYPASSRLS` ignore the policies. The migration role and any administration tooling must never be used by the application.
 - PostgreSQL's own foreign-key checks bypass row-level security. The insert path was tested and gives the same error whether or not the other tenant's row exists. New paths that touch other tenants' rows need the same test.

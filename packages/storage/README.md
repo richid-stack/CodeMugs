@@ -2,7 +2,7 @@
 
 Tenant-scoped access to the primary PostgreSQL database, and its migrations.
 
-**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first five tables (organisations, projects, API keys, the audit log and events). Object storage and the cache do not exist yet.
+**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first six tables (organisations, projects, API keys, the audit log, events and jobs). Object storage and the cache do not exist yet.
 
 Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md) (tenant isolation) and [ADR 0009](../../docs/architecture/decisions/0009-data-access-and-migrations.md) (data access, versions, migrations).
 
@@ -13,8 +13,8 @@ Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md
 - `runMigrations(connectionString)`: applies the numbered SQL files in `migrations/`. Run it as the **privileged role**, over a direct connection.
 - `loadMigrations()`: reads and validates the files without touching a database.
 - `postgresErrorCode(error)`: the SQLSTATE of a database error, so callers map specific failures without matching message text.
-- `@codemugs/storage/testing`: the test harness and schema guard, for **test files only** (a database per test file, the restricted role, and a check of every table against the tenancy rules). Other packages with database tests use it.
-- Tables so far: `organisations`, `projects`, `api_keys` and `audit_log`. The last two are used by [`@codemugs/auth`](../auth/README.md) ([ADR 0010](../../docs/architecture/decisions/0010-api-keys-and-audit-log.md)).
+- `@codemugs/storage/testing`: the test harness and schema guard, for **test files only** (a database per test file, the two restricted roles, and a check of every table against the tenancy rules and the dispatcher rules). Other packages with database tests use it.
+- Tables so far: `organisations`, `projects`, `api_keys`, `audit_log`, `events` and `jobs`. `api_keys` and `audit_log` are used by [`@codemugs/auth`](../auth/README.md) ([ADR 0010](../../docs/architecture/decisions/0010-api-keys-and-audit-log.md)), `events` by [`@codemugs/ingestion`](../../apps/ingestion/README.md) ([ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md)) and `jobs` by [`@codemugs/jobs`](../jobs/README.md) ([ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)).
 
 ```ts
 const pool = createPool({ connectionString: applicationDatabaseUrl });
@@ -32,6 +32,10 @@ const projects = await withTenant(pool, organisationId, async (db) => {
 2. Give a tenant-owned table a non-null `organisation_id`, `ENABLE` and `FORCE ROW LEVEL SECURITY`, a policy `TO codemugs_app` that uses `nullif(current_setting('app.organisation_id', true), '')::uuid` for both `USING` and `WITH CHECK`, and grants that exclude `TRUNCATE`. Include `organisation_id` in every unique constraint, and in both sides of every foreign key to another tenant table (reference `(organisation_id, id)`). An audit-style table the application must not change grants `SELECT` and `INSERT` only.
 3. Run the tests. The schema guard fails if any of that is missing, and the cross-tenant tests are where you add the new table's cases.
 
+## The second role
+
+`codemugs_dispatcher` is held only by worker processes and exists so a worker can find the next job in any tenant ([ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)). It can read `jobs` and move a job from queued or running to running or dead, and it has no privilege on any other table. Its two policies on `jobs` are the only ones that do not depend on a tenant. **Do not grant it anything else, and do not add a column to `jobs` without deciding it in ADR 0012 first:** the schema guard fails on both. It is created by infrastructure like `codemugs_app` ([`infrastructure/database`](../../infrastructure/database/README.md)), and migration 0004 refuses to run without it.
+
 ## Running the tests
 
 The unit tests need nothing. The database tests need a PostgreSQL server you can use as a superuser, and are skipped when none is configured:
@@ -42,7 +46,7 @@ export CODEMUGS_TEST_DATABASE_URL=postgres://codemugs:codemugs_dev_only@127.0.0.
 pnpm --filter @codemugs/storage test
 ```
 
-Each test file creates its own database and the restricted `codemugs_app` role, and drops the database afterwards. Set `REQUIRE_DATABASE_TESTS=true` (CI does) to make a missing database a failure instead of a skip.
+Each test file creates its own database and the restricted `codemugs_app` and `codemugs_dispatcher` roles, and drops the database afterwards. Set `REQUIRE_DATABASE_TESTS=true` (CI does) to make a missing database a failure instead of a skip.
 
 ## Limits
 
