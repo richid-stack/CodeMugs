@@ -17,9 +17,15 @@ import { runMigrations } from "../migrate.js";
 /** The restricted runtime role. In real deployments infrastructure creates it, not a migration. */
 export const APP_ROLE = "codemugs_app";
 
-// A throwaway password for a role on a throwaway local test server. Same convention as
+/**
+ * The role worker processes use to find the next job in any tenant (ADR 0012). It can see the
+ * jobs table and nothing else. The API never holds it.
+ */
+export const DISPATCHER_ROLE = "codemugs_dispatcher";
+
+// A throwaway password for roles on a throwaway local test server. Same convention as
 // infrastructure/docker/compose.dev.yml. It is never used outside tests.
-const APP_ROLE_PASSWORD = "codemugs_dev_only";
+const ROLE_PASSWORD = "codemugs_dev_only";
 
 // Serialises role and database creation between test files running in parallel.
 const SETUP_LOCK_KEY = 727_227_002;
@@ -41,6 +47,8 @@ export interface TestDatabase {
   readonly adminUrl: string;
   /** Connection string for the restricted application role. */
   readonly appUrl: string;
+  /** Connection string for the dispatcher role, which only worker processes hold. */
+  readonly dispatcherUrl: string;
   /** Drops the database, ending any connections still open to it. */
   drop(): Promise<void>;
 }
@@ -56,14 +64,14 @@ function rewrite(
   return parsed.toString();
 }
 
-async function ensureAppRole(client: Client): Promise<void> {
+async function ensureRole(client: Client, role: string): Promise<void> {
   const attributes = "LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION";
-  const existing = await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [APP_ROLE]);
+  const existing = await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [role]);
   if (existing.rowCount === 0) {
-    await client.query(`CREATE ROLE ${APP_ROLE} ${attributes} PASSWORD '${APP_ROLE_PASSWORD}'`);
+    await client.query(`CREATE ROLE ${role} ${attributes} PASSWORD '${ROLE_PASSWORD}'`);
   } else {
     // Whatever an earlier run left behind, the role is restricted again before it is used.
-    await client.query(`ALTER ROLE ${APP_ROLE} ${attributes} PASSWORD '${APP_ROLE_PASSWORD}'`);
+    await client.query(`ALTER ROLE ${role} ${attributes} PASSWORD '${ROLE_PASSWORD}'`);
   }
 }
 
@@ -87,7 +95,8 @@ export async function createTestDatabase(
   try {
     // A session-level lock, released when the connection ends.
     await maintenance.query("SELECT pg_advisory_lock($1)", [SETUP_LOCK_KEY]);
-    await ensureAppRole(maintenance);
+    await ensureRole(maintenance, APP_ROLE);
+    await ensureRole(maintenance, DISPATCHER_ROLE);
     await maintenance.query(`CREATE DATABASE ${name}`);
   } finally {
     await maintenance.end();
@@ -96,7 +105,12 @@ export async function createTestDatabase(
   const database: TestDatabase = {
     name,
     adminUrl: rewrite(baseUrl, { database: name }),
-    appUrl: rewrite(baseUrl, { database: name, user: APP_ROLE, password: APP_ROLE_PASSWORD }),
+    appUrl: rewrite(baseUrl, { database: name, user: APP_ROLE, password: ROLE_PASSWORD }),
+    dispatcherUrl: rewrite(baseUrl, {
+      database: name,
+      user: DISPATCHER_ROLE,
+      password: ROLE_PASSWORD,
+    }),
     async drop() {
       const client = new Client({ connectionString: baseUrl });
       await client.connect();

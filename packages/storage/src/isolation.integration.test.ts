@@ -7,6 +7,7 @@ import {
   adminDatabaseUrl,
   APP_ROLE,
   createTestDatabase,
+  DISPATCHER_ROLE,
   type TestDatabase,
 } from "./testing/postgres.js";
 import { findSchemaViolations } from "./testing/schema-guard.js";
@@ -411,11 +412,13 @@ describeDatabase("the isolation checks themselves (canary)", () => {
   const cleanup: Array<() => Promise<void>> = [];
   let app: Pool;
   let admin: Pool;
+  let adminUrl: string;
   const orgA = randomUUID();
   const orgB = randomUUID();
 
   beforeAll(async () => {
     const database = await createTestDatabase({ migrate: false });
+    adminUrl = database.adminUrl;
     cleanup.unshift(() => database.drop());
     admin = createPool({ connectionString: database.adminUrl, maxConnections: 2 });
     cleanup.unshift(() => admin.end());
@@ -439,6 +442,23 @@ describeDatabase("the isolation checks themselves (canary)", () => {
       );
       CREATE TABLE audit_log (id int PRIMARY KEY, organisation_id uuid NOT NULL);
       GRANT SELECT, INSERT, UPDATE ON audit_log TO ${APP_ROLE};
+
+      -- Mistakes in how the cross-tenant dispatcher is set up (ADR 0012).
+      GRANT SELECT ON leaky TO ${DISPATCHER_ROLE};
+      CREATE POLICY sees_all ON no_tenant_column TO ${DISPATCHER_ROLE} USING (true);
+      CREATE TABLE jobs (
+        id uuid PRIMARY KEY,
+        organisation_id uuid NOT NULL,
+        kind text NOT NULL,
+        status text NOT NULL,
+        payload jsonb
+      );
+      ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+      CREATE POLICY everyone ON jobs TO ${APP_ROLE}, ${DISPATCHER_ROLE} USING (true);
+      GRANT SELECT, INSERT, DELETE ON jobs TO ${APP_ROLE}, ${DISPATCHER_ROLE};
+      GRANT UPDATE (kind, status) ON jobs TO ${APP_ROLE};
+      GRANT UPDATE (organisation_id, status) ON jobs TO ${DISPATCHER_ROLE};
     `);
     await admin.query("INSERT INTO leaky (organisation_id, note) VALUES ($1, 'a'), ($2, 'b')", [
       orgA,
@@ -468,7 +488,49 @@ describeDatabase("the isolation checks themselves (canary)", () => {
         "unique index leaky_note_unique on leaky does not include organisation_id",
         "foreign key child_leaky_id_fkey from child to leaky does not include organisation_id on both sides",
         `table audit_log is append-only but ${APP_ROLE} can update or delete it`,
+        `${DISPATCHER_ROLE} has privileges on table leaky, which is not a job table`,
+        `policy sees_all on no_tenant_column lets ${DISPATCHER_ROLE} see rows across tenants`,
+        `policy everyone on jobs shares ${DISPATCHER_ROLE}'s cross-tenant access with another role`,
+        `table jobs has no tenant policy, only one for ${DISPATCHER_ROLE}`,
+        `table jobs keeps its rows but ${APP_ROLE} can delete them`,
+        `${DISPATCHER_ROLE} can insert into table jobs`,
+        `${DISPATCHER_ROLE} can delete from table jobs`,
+        `table jobs has column payload, which ${DISPATCHER_ROLE} would read across tenants; decide it in ADR 0012 first`,
+        `${APP_ROLE} can update column kind of table jobs, which must stay fixed`,
+        `${DISPATCHER_ROLE} can update column organisation_id of table jobs, which must stay fixed`,
       ]),
+    );
+  });
+
+  it("does not report the legitimate ways a job column can change", async () => {
+    const violations = await findSchemaViolations(admin);
+    expect(violations.filter((line) => line.includes("column status"))).toEqual([]);
+  });
+
+  it("reports a runtime role that is more powerful than it should be", async () => {
+    // Role changes are transactional in PostgreSQL, so this one connection sees them and nobody
+    // else does: the roles are shared with test files running in parallel.
+    const alone = createPool({ connectionString: adminUrl, maxConnections: 1 });
+    try {
+      await alone.query("BEGIN");
+      await alone.query(`ALTER ROLE ${DISPATCHER_ROLE} BYPASSRLS CREATEDB`);
+      await alone.query(`GRANT ${APP_ROLE} TO ${DISPATCHER_ROLE}`);
+      await alone.query(`ALTER TABLE leaky OWNER TO ${APP_ROLE}`);
+      const violations = await findSchemaViolations(alone);
+      expect(violations).toEqual(
+        expect.arrayContaining([
+          `role ${DISPATCHER_ROLE} can bypass row-level security, create databases`,
+          `role ${DISPATCHER_ROLE} is a member of role ${APP_ROLE}`,
+          `role ${APP_ROLE} owns leaky, and an owner can switch row security off`,
+        ]),
+      );
+    } finally {
+      await alone.query("ROLLBACK");
+      await alone.end();
+    }
+    // Rolled back: the shared role is as restricted as before.
+    expect((await findSchemaViolations(admin)).filter((line) => line.startsWith("role "))).toEqual(
+      [],
     );
   });
 });
