@@ -1,11 +1,14 @@
 import { authenticateApiKey } from "@codemugs/auth";
 import type { Secret } from "@codemugs/configuration";
+import { recordEvents } from "@codemugs/ingestion";
 import { createPool } from "@codemugs/storage";
 import type { Authenticator } from "./authentication.js";
+import type { EventIngester } from "./ingestion.js";
 import type { ReadinessCheck } from "./routes/health.js";
 
 export interface DatabaseServices {
   authenticate: Authenticator;
+  ingest: EventIngester;
   readiness: ReadinessCheck;
   close(): Promise<void>;
 }
@@ -21,6 +24,7 @@ export function createDatabaseServices(
   const pool = createPool({ connectionString: databaseUrl.reveal(), onError: options.onError });
   return {
     authenticate: (presentedKey) => authenticateApiKey(pool, presentedKey),
+    ingest: (scope, body) => recordEvents(pool, scope, body),
     readiness: {
       name: "database",
       timeoutMs: 1_500,

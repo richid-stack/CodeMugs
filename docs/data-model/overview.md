@@ -1,6 +1,6 @@
 # Data model overview (draft)
 
-> **Draft.** Only the tenancy and identity foundation exists as a schema: `organisations`, `projects`, `api_keys` and `audit_log`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
+> **Draft.** Only the tenancy, identity and event foundation exists as a schema: `organisations`, `projects`, `api_keys`, `audit_log` and `events`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
 
 ## Rules for every table
 
@@ -8,7 +8,8 @@
 - **Tenant identity comes from the authenticated credential**, never from a payload.
 - **Credentials are never stored in the application database in usable form.** The database holds references to secrets managed by a KMS or vault. API keys are stored hashed: `api_keys` holds the SHA-256 of a key's secret and never the key ([ADR 0010](../architecture/decisions/0010-api-keys-and-audit-log.md)).
 - **Audit records are append-only.** `audit_log` allows the application to insert and read only, and triggers stop updates, deletes and truncation even for privileged roles. A database administrator can still disable the triggers.
-- **Every store supports deletion and retention** from the first migration. See [data classification](../security/data-classification.md).
+- **Every store supports deletion and retention** from the first migration. See [data classification](../security/data-classification.md). `events` has indexes for retention by age but no deletion path yet: the application cannot delete events, and a deliberate, audited path is still to be built (release gate 15).
+- **Events are immutable.** `events` allows the application to insert and read only. The primary key `(organisation_id, project_id, event_id)` is the idempotency key ([ADR 0011](../architecture/decisions/0011-event-ingestion.md)).
 - **High-volume telemetry does not live in the primary database for long.** See [ADR 0005](../architecture/decisions/0005-modular-monolith-and-postgres-first-storage.md).
 
 ## Entity groups

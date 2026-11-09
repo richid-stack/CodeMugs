@@ -134,6 +134,17 @@ async function checkNormalOperation() {
       );
     }
 
+    // The same for sending events: with nothing to check the key against, nothing is accepted.
+    const events = await fetch(`${baseUrl}/v1/events`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fakeKey()}`, "content-type": "application/json" },
+      body: JSON.stringify({ events: [] }),
+    });
+    check(
+      events.status === 503,
+      `POST /v1/events answers 503 when no database is configured (status=${events.status})`,
+    );
+
     server.child.kill("SIGTERM");
     const result = await withTimeout(server.closed, SHUTDOWN_TIMEOUT_MS, "graceful shutdown");
     check(
@@ -232,6 +243,14 @@ async function checkUnreachableDatabase() {
     });
     const text = await whoami.text();
     check(whoami.status === 500, `GET /v1/whoami answers 500, not 401 (status=${whoami.status})`);
+
+    // Events must not be acknowledged when nothing can check the key or store them.
+    const events = await fetch(`${baseUrl}/v1/events`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${fakeKey()}`, "content-type": "application/json" },
+      body: JSON.stringify({ events: [] }),
+    });
+    check(events.status === 500, `POST /v1/events answers 500, not 202 (status=${events.status})`);
     check(
       !text.includes(password) && !text.includes("127.0.0.1") && !text.includes("ECONNREFUSED"),
       "the error response exposes nothing about the database",

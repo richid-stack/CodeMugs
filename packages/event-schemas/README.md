@@ -12,3 +12,4 @@ Wire-format schemas for events entering the platform.
 - **No tenant or project in the payload.** Gateways derive tenant identity from the authenticated credential. Unknown keys, including any `tenantId` a client sends, are stripped. This is covered by a test.
 - **Strict shapes.** Event types follow a fixed naming pattern, timestamps must be ISO 8601 with an offset, and the schema version is explicit.
 - **Size is a gateway concern.** Payload size limits are enforced at the gateway body limit, not in this schema.
+- **Storability is not checked here.** This schema accepts values the database cannot hold, such as year 0000, a NUL character or a lone surrogate in a string. [`@codemugs/ingestion`](../../apps/ingestion/README.md) turns those into per-event rejections.

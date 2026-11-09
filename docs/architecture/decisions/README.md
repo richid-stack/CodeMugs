@@ -12,5 +12,6 @@
 | [0008](0008-functional-source-license.md)                   | License the engine under the Functional Source License      | Accepted |
 | [0009](0009-data-access-and-migrations.md)                  | Data access, PostgreSQL versions and migrations             | Accepted |
 | [0010](0010-api-keys-and-audit-log.md)                      | API keys and the audit log                                  | Accepted |
+| [0011](0011-event-ingestion.md)                             | Event ingestion: the contract and the storage               | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

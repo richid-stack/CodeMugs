@@ -2,7 +2,7 @@
 
 Tenant-scoped access to the primary PostgreSQL database, and its migrations.
 
-**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first four tables. Object storage and the cache do not exist yet.
+**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first five tables (organisations, projects, API keys, the audit log and events). Object storage and the cache do not exist yet.
 
 Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md) (tenant isolation) and [ADR 0009](../../docs/architecture/decisions/0009-data-access-and-migrations.md) (data access, versions, migrations).
 
