@@ -1,16 +1,17 @@
 # @codemugs/api
 
-The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and one endpoint behind it (`GET /v1/whoami`). No business endpoints yet.
+The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and two endpoints behind it: `GET /v1/whoami` and `POST /v1/events` (event ingestion). Nothing reads events back yet.
 
 **Status:** Phase 1 · Foundation (started)
 
 ## Endpoints
 
-| Route            | Purpose                                                                                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz`   | Liveness. The process is up. Never checks dependencies, so a database outage cannot trigger restarts                                                       |
-| `GET /readyz`    | Readiness. Runs registered dependency checks with timeouts and returns `503` if any fail or shutdown has begun. Failure details are logged, never returned |
-| `GET /v1/whoami` | Requires an API key. Returns the `organisationId`, `projectId` and `apiKeyId` the key belongs to, so an SDK can check a key without sending data           |
+| Route             | Purpose                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`    | Liveness. The process is up. Never checks dependencies, so a database outage cannot trigger restarts                                                       |
+| `GET /readyz`     | Readiness. Runs registered dependency checks with timeouts and returns `503` if any fail or shutdown has begun. Failure details are logged, never returned |
+| `GET /v1/whoami`  | Requires an API key. Returns the `organisationId`, `projectId` and `apiKeyId` the key belongs to, so an SDK can check a key without sending data           |
+| `POST /v1/events` | Requires an API key. Records a batch of 1 to 500 events and says what happened to each (see below)                                                         |
 
 ## Behaviour
 
@@ -22,6 +23,41 @@ The control plane's HTTP API. Health endpoints, API key authentication for every
 - On `SIGTERM` or `SIGINT`: readiness flips to `503`, in-flight requests drain, and the process exits. A forced exit follows after `SHUTDOWN_TIMEOUT_MS`.
 - Invalid configuration fails at startup and names the variables at fault, never their values.
 
+## Sending events
+
+```http
+POST /v1/events
+Authorization: Bearer <api key>
+Content-Type: application/json
+
+{ "events": [ { "schemaVersion": 1, "eventId": "<uuid>", "type": "checkout.completed",
+                "occurredAt": "2026-11-09T01:00:00Z", "environment": "production",
+                "sdk": { "name": "sdk-js", "version": "1.0.0" }, "attributes": {} } ] }
+```
+
+The response is `202` when the batch was understood, with a result for every event in the order sent:
+
+```json
+{
+  "accepted": 1,
+  "duplicates": 1,
+  "rejected": 1,
+  "results": [
+    { "index": 0, "eventId": "...", "status": "accepted" },
+    { "index": 1, "eventId": "...", "status": "duplicate" },
+    { "index": 2, "status": "rejected", "reason": "invalid_event", "field": "type" }
+  ]
+}
+```
+
+- **An SDK drops rejected events and retries only on `5xx`.** A rejection cannot be fixed by sending the event again. Reasons are listed in [`@codemugs/ingestion`](../ingestion/README.md).
+- **A retry is safe.** The event id is the idempotency key, per project. A repeated event comes back as `duplicate` and is not stored twice, even when two copies arrive at once. The first copy wins, so a retry with different content is not detected.
+- **`accepted` means committed.** If the database cannot record the batch the answer is `500` and nothing from it was stored.
+- A batch that cannot be read at all gets `400` with one of `body_not_an_object`, `events_missing`, `events_empty` or `too_many_events`. Other request errors are `400 invalid_json`, `413 payload_too_large` and `415 unsupported_media_type` (only `application/json` is accepted).
+- The tenant, the project and the key an event is recorded under come from the API key. Nothing in the request can change them.
+
+Not done: nothing reads events back or processes them yet, events are not redacted, and there are no rate limits or quotas ([ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md)).
+
 ## Authentication
 
 Everything under `/v1` requires `Authorization: Bearer <api key>`. Health routes stay public. The check is a hook on the scope that holds the `/v1` routes, so a route added there is protected without anyone remembering to protect it, and a test fails if a `/v1` route exists outside that scope.
@@ -31,6 +67,7 @@ Everything under `/v1` requires `Authorization: Bearer <api key>`. Health routes
 - **A failure to decide is not a failure to authenticate.** If the database cannot answer, the request gets a generic `500`, never a `401`, so an outage cannot look like a revoked key to an SDK that then discards the key.
 - **Without a database there is no authentication.** If `DATABASE_URL` is not set (allowed outside production), every `/v1` route answers `503 authentication_unavailable`, even for a request that presents a key.
 - Authenticated responses carry `cache-control: no-store`, and every log line for the request carries `organisationId`, `projectId` and `apiKeyId`.
+- **Logs hold no event content.** A database error is logged as its kind, SQLSTATE and the table, column and constraint involved, without the failing row or the JSON PostgreSQL quotes, which can be customer data.
 
 Not done yet: **rate limiting.** A well-formed but wrong key costs one short database transaction ([ADR 0010](../../docs/architecture/decisions/0010-api-keys-and-audit-log.md)), so this API must not be exposed to the internet until limits exist at the edge or in the API. There are also no key scopes, expiry or rotation, and nothing that creates organisations, projects or keys over HTTP: those functions in [`@codemugs/auth`](../../packages/auth/README.md) are reachable only from code.
 

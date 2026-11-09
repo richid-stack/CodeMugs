@@ -30,7 +30,9 @@ async function main(): Promise<void> {
   const { app, health } = await buildApp({
     config,
     readinessChecks: database === undefined ? [] : [database.readiness],
-    ...(database === undefined ? {} : { authenticator: database.authenticate }),
+    ...(database === undefined
+      ? {}
+      : { authenticator: database.authenticate, ingester: database.ingest }),
   });
   reportDatabaseError = (error) => {
     app.log.error({ err: error }, "database connection error");

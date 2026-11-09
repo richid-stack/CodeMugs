@@ -44,6 +44,9 @@ importers:
       '@codemugs/configuration':
         specifier: workspace:*
         version: link:../../packages/configuration
+      '@codemugs/ingestion':
+        specifier: workspace:*
+        version: link:../ingestion
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -53,6 +56,19 @@ importers:
       fastify:
         specifier: 5.12.8
         version: 5.12.8
+
+  apps/ingestion:
+    dependencies:
+      '@codemugs/event-schemas':
+        specifier: workspace:*
+        version: link:../../packages/event-schemas
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+    devDependencies:
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
 
   packages/auth:
     dependencies:

@@ -1,9 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { bearerToken, type Authenticator } from "../authentication.js";
+import type { EventIngester } from "../ingestion.js";
+import { registerEventRoutes } from "./events.js";
 
 export interface V1RoutesOptions {
   /** Without one, every /v1 route answers 503: the API refuses to guess who is calling. */
   authenticator: Authenticator | undefined;
+  /** Without one, `POST /v1/events` answers 503. */
+  ingester: EventIngester | undefined;
 }
 
 /**
@@ -16,7 +20,10 @@ export interface V1RoutesOptions {
  * response. A failure of the authenticator itself is not a credential failure: it propagates to
  * the error handler and becomes a generic 500.
  */
-export function registerV1Routes(app: FastifyInstance, { authenticator }: V1RoutesOptions): void {
+export function registerV1Routes(
+  app: FastifyInstance,
+  { authenticator, ingester }: V1RoutesOptions,
+): void {
   void app.register(
     (v1, _options, done) => {
       v1.addHook("onRequest", async (request, reply) => {
@@ -78,6 +85,8 @@ export function registerV1Routes(app: FastifyInstance, { authenticator }: V1Rout
           apiKeyId: principal.apiKeyId,
         };
       });
+
+      registerEventRoutes(v1, { ingester });
 
       done();
     },
