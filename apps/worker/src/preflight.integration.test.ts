@@ -207,6 +207,40 @@ describeDatabase("checking the database before the worker takes jobs", () => {
       }
     });
 
+    it.each(["a throwaway role", "pg_read_all_data"])(
+      "refuses a runtime role that is a member of another role (%s)",
+      async (kind) => {
+        const role = await throwawayRole("");
+        let granted = "pg_read_all_data";
+        if (kind === "a throwaway role") {
+          granted = `cm_pf_${randomBytes(6).toString("hex")}`;
+          await admin.query(`CREATE ROLE ${granted} NOLOGIN`);
+          roles.push(granted);
+        }
+        await admin.query(`GRANT ${granted} TO ${role.name}`);
+
+        const asApp = await failureOf(
+          verifyDatabase(
+            { app: pool(role.url), dispatcher: dispatcherPool() },
+            { app: role.name, dispatcher: DISPATCHER_ROLE },
+          ),
+        );
+        expect(asApp).toMatchObject({ code: "role_too_powerful", variable: "DATABASE_URL" });
+        expect(asApp.message).toContain("member of other roles");
+
+        const asDispatcher = await failureOf(
+          verifyDatabase(
+            { app: appPool(), dispatcher: pool(role.url) },
+            { app: APP_ROLE, dispatcher: role.name },
+          ),
+        );
+        expect(asDispatcher).toMatchObject({
+          code: "role_too_powerful",
+          variable: "DISPATCHER_DATABASE_URL",
+        });
+      },
+    );
+
     it("refuses a role of the right name that has been given nothing", async () => {
       const role = await throwawayRole("");
       const error = await failureOf(

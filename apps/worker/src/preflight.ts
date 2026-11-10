@@ -1,4 +1,5 @@
 import { APP_ROLE, DISPATCHER_ROLE, postgresErrorCode, type Pool } from "@codemugs/storage";
+import { describeFailure } from "./failure.js";
 
 export type StartupCode =
   "database_unreachable" | "wrong_role" | "role_too_powerful" | "schema_not_ready";
@@ -40,21 +41,6 @@ const DISPATCHER_PROBES = ["SELECT 1 FROM jobs LIMIT 1"] as const;
 // undefined_table, undefined_column, insufficient_privilege.
 const SCHEMA_NOT_READY = new Set(["42P01", "42703", "42501"]);
 
-/**
- * A short, safe description of why a connection failed: the SQLSTATE of a database error
- * (`db_28P01`), the code of a network error (`ECONNREFUSED`), or `unknown`. Never the message,
- * which can contain the host and the user name.
- */
-function describeFailure(error: unknown): string {
-  const sqlstate = postgresErrorCode(error);
-  if (sqlstate !== undefined) return `db_${sqlstate}`;
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = error.code;
-    if (typeof code === "string" && /^E[A-Z]{3,20}$/.test(code)) return code;
-  }
-  return "unknown";
-}
-
 interface RoleRow {
   rolname: string;
   rolsuper: boolean;
@@ -62,6 +48,8 @@ interface RoleRow {
   rolcreaterole: boolean;
   rolcreatedb: boolean;
   rolreplication: boolean;
+  /** How many roles this one is a member of. A count comes back from the driver as a string. */
+  memberships: string;
 }
 
 async function verify(connection: Connection): Promise<void> {
@@ -70,8 +58,11 @@ async function verify(connection: Connection): Promise<void> {
   let row: RoleRow | undefined;
   try {
     const result = await pool.query<RoleRow>(
-      `SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication
-         FROM pg_roles WHERE rolname = current_user`,
+      `SELECT r.rolname, r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb,
+              r.rolreplication,
+              (SELECT count(*) FROM pg_catalog.pg_auth_members m WHERE m.member = r.oid)
+                AS memberships
+         FROM pg_catalog.pg_roles r WHERE r.rolname = current_user`,
     );
     row = result.rows[0];
   } catch (error) {
@@ -97,6 +88,15 @@ async function verify(connection: Connection): Promise<void> {
       "role_too_powerful",
       variable,
       `the role ${role} has more privileges than the role contract allows`,
+    );
+  }
+  // A member of another role can take that role's powers with SET ROLE, or inherit its grants,
+  // which for the dispatcher would be more than the jobs table. The runtime roles belong to none.
+  if (Number(row.memberships) > 0) {
+    throw new WorkerStartupError(
+      "role_too_powerful",
+      variable,
+      `the role ${role} is a member of other roles, which the role contract does not allow`,
     );
   }
 

@@ -51,6 +51,16 @@ describeDatabase("the worker process's startup and shutdown", () => {
     return handle;
   }
 
+  const oneEvent = () => ({
+    schemaVersion: 1,
+    eventId: randomUUID(),
+    type: "t",
+    occurredAt: "2026-03-01T10:15:00Z",
+    environment: "production",
+    sdk: { name: "sdk-js", version: "1.2.3" },
+    attributes: {},
+  });
+
   async function newScope(): Promise<IngestScope> {
     const project = await createProject(app, orgId, {
       name: `p-${randomUUID().slice(0, 8)}`,
@@ -176,6 +186,31 @@ describeDatabase("the worker process's startup and shutdown", () => {
     expect(text).toContain("job failed for good");
     expect(text).toContain("handler_error");
     expect(text).not.toContain(secret);
+  });
+
+  it("logs the code of a dropped connection, and carries on with new ones", async () => {
+    await start();
+    await waitFor("the worker's connections", async () => (await openConnections()) > 0);
+    await admin.query(
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1",
+      [APPLICATION_NAME],
+    );
+    await waitFor("the dropped connection to be logged", () =>
+      Promise.resolve(
+        lines.some((line) => {
+          const entry = JSON.parse(line) as Record<string, unknown>;
+          return entry["msg"] === "database connection error" && entry["code"] === "db_57P01";
+        }),
+      ),
+    );
+
+    // New connections are made, and work goes on.
+    const scope = await newScope();
+    await recordEvents(app, scope, { events: [oneEvent()] });
+    await waitFor("the job to succeed", async () => {
+      return (await statusOf("events.aggregate")).status === "succeeded";
+    });
+    expect(lines.join("\n")).not.toContain(password);
   });
 
   it("takes no job of a kind it has no handler for", async () => {

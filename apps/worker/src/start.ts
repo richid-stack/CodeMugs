@@ -1,7 +1,8 @@
 import type { WorkerConfig } from "@codemugs/configuration";
 import { runWorker, type JobHandler } from "@codemugs/jobs";
-import { createPool, postgresErrorCode } from "@codemugs/storage";
+import { createPool } from "@codemugs/storage";
 import { logWorkerEvent } from "./events.js";
+import { describeFailure } from "./failure.js";
 import { handlers as registeredHandlers } from "./handlers.js";
 import type { Logger } from "./logger.js";
 import { verifyDatabase } from "./preflight.js";
@@ -28,12 +29,6 @@ export interface StartOptions {
   verify?: typeof verifyDatabase;
 }
 
-/** The code of a connection error, safe to log: a SQLSTATE or `unknown`, never the message. */
-const failureCode = (error: unknown): string => {
-  const sqlstate = postgresErrorCode(error);
-  return sqlstate === undefined ? "unknown" : `db_${sqlstate}`;
-};
-
 /**
  * Connects to the database as the two roles, checks them, and starts taking jobs. Throws a
  * `WorkerStartupError` without taking any if the connections are not what they should be.
@@ -44,7 +39,7 @@ export async function startWorker(options: StartOptions): Promise<WorkerHandle> 
   const verify = options.verify ?? verifyDatabase;
 
   const onError = (error: Error): void => {
-    logger.error("database connection error", { code: failureCode(error) });
+    logger.error("database connection error", { code: describeFailure(error) });
   };
   // Every job in progress holds a connection, so the application pool is as large as the
   // concurrency. Finding work is one query at a time.

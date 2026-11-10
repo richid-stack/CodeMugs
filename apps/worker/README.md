@@ -7,7 +7,7 @@ The process that runs queued jobs. It takes due jobs from the queue ([`@codemugs
 ## What it does
 
 1. Reads its configuration. Invalid configuration fails at startup and names the variables at fault, never their values.
-2. Connects as two different database roles (`DATABASE_URL`, the application role, and `DISPATCHER_DATABASE_URL`, the dispatcher role) and checks them before it takes any job: each connection must be the role it should be, that role must have none of the powers the role contract forbids, and the database must have what the handlers use. A failed check ends the process with exit code 1 and a log line that names the variable and a short code.
+2. Connects as two different database roles (`DATABASE_URL`, the application role, and `DISPATCHER_DATABASE_URL`, the dispatcher role) and checks them before it takes any job: each connection must be the role it should be, that role must have none of the powers the role contract forbids and belong to no other role, and the database must have what the handlers use. A failed check ends the process with exit code 1 and a log line that names the variable and a short code.
 3. Takes jobs and runs them, up to `WORKER_CONCURRENCY` at a time, until it is told to stop.
 4. On `SIGTERM` or `SIGINT` it takes no new job, waits for the jobs in progress, closes its connections and exits with code 0. A job still running after `SHUTDOWN_TIMEOUT_MS` is abandoned and the process exits with code 1. An abandoned job leaves no trace in the data, because its transaction ends with the connection, and another worker takes the job when its lease runs out.
 
