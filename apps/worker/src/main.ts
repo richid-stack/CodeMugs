@@ -1,6 +1,5 @@
 import { ConfigError, loadWorkerConfig } from "@codemugs/configuration";
-import { describeFatal } from "./fatal.js";
-import { createLogger } from "./logger.js";
+import { createLogger, describeFatal } from "@codemugs/logging";
 import { WorkerStartupError } from "./preflight.js";
 import { startWorker } from "./start.js";
 

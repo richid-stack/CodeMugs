@@ -2,9 +2,8 @@ import type { WorkerConfig } from "@codemugs/configuration";
 import { runWorker, type JobHandler } from "@codemugs/jobs";
 import { createPool } from "@codemugs/storage";
 import { logWorkerEvent } from "./events.js";
-import { describeFailure } from "./failure.js";
 import { handlers as registeredHandlers } from "./handlers.js";
-import type { Logger } from "./logger.js";
+import { describeFailure, type Logger } from "@codemugs/logging";
 import { verifyDatabase } from "./preflight.js";
 
 /** What the worker's connections are called in `pg_stat_activity`. */

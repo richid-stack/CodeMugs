@@ -84,6 +84,9 @@ importers:
       '@codemugs/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../../packages/logging
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -118,6 +121,8 @@ importers:
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../storage
+
+  packages/logging: {}
 
   packages/storage:
     dependencies:
