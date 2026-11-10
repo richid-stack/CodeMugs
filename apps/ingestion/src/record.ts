@@ -1,5 +1,8 @@
-import { withTenant, type Pool } from "@codemugs/storage";
+import { randomUUID } from "node:crypto";
 import type { EventEnvelope } from "@codemugs/event-schemas";
+import { enqueueJob } from "@codemugs/jobs";
+import { withTenant, type Pool } from "@codemugs/storage";
+import { EVENTS_AGGREGATE_KIND } from "./aggregate.js";
 import {
   checkBatchShape,
   validateEvent,
@@ -45,9 +48,9 @@ export interface IngestOptions {
  */
 const INSERT_EVENTS = `
   INSERT INTO events (organisation_id, project_id, event_id, api_key_id, schema_version, type,
-                      occurred_at, environment, sdk_name, sdk_version, attributes)
+                      occurred_at, environment, sdk_name, sdk_version, attributes, batch_id)
   SELECT $1::uuid, $2::uuid, e.event_id, $3::uuid, e.schema_version, e.type,
-         e.occurred_at, e.environment, e.sdk_name, e.sdk_version, e.attributes
+         e.occurred_at, e.environment, e.sdk_name, e.sdk_version, e.attributes, $5::uuid
   FROM jsonb_to_recordset($4::jsonb) AS e(
     event_id uuid, schema_version smallint, type text, occurred_at timestamptz,
     environment text, sdk_name text, sdk_version text, attributes jsonb)
@@ -57,7 +60,10 @@ const INSERT_EVENTS = `
 `;
 
 /**
- * Validates a request body and durably records the events in it.
+ * Validates a request body and durably records the events in it, and in the same transaction
+ * enqueues the job that processes them (`events.aggregate`, ADR 0013). An acknowledged event is
+ * therefore always stored together with its job. If the job cannot be enqueued, nothing is
+ * stored, and the client retries.
  *
  * Every event gets its own result. An event that cannot be accepted is rejected with a reason,
  * and the rest of the batch is stored anyway, so one bad event never blocks a batch that a client
@@ -117,12 +123,21 @@ export async function recordEvents(
         sdk_version: event.sdk.version,
         attributes: event.attributes,
       }));
+      // The id of this batch of newly stored events. The job that processes them points at it.
+      const batchId = randomUUID();
       const result = await client.query<{ event_id: string }>(INSERT_EVENTS, [
         client.organisationId,
         scope.projectId,
         scope.apiKeyId,
         JSON.stringify(document),
+        batchId,
       ]);
+      // In the same transaction as the events: they are stored together with the job that will
+      // process them, or not at all. A batch that stored nothing new (every event was a
+      // duplicate) has nothing to process.
+      if (result.rows.length > 0) {
+        await enqueueJob(client, { kind: EVENTS_AGGREGATE_KIND, subjectId: batchId });
+      }
       return new Set(result.rows.map((row) => row.event_id.toLowerCase()));
     });
 

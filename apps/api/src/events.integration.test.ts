@@ -136,6 +136,31 @@ describeDatabase("POST /v1/events against PostgreSQL", () => {
     }
   });
 
+  it("enqueues the job that processes the batch, under the key's organisation only", async () => {
+    const built = await start();
+    const events = [event(), event()];
+    const jobsOf = async (organisationId: string): Promise<Array<{ subject_id: string }>> =>
+      (
+        await admin.query<{ subject_id: string }>(
+          "SELECT subject_id FROM jobs WHERE organisation_id = $1 AND kind = 'events.aggregate'",
+          [organisationId],
+        )
+      ).rows;
+    const before = { a: (await jobsOf(orgA)).length, b: (await jobsOf(orgB)).length };
+
+    const response = await post(built, keyA.key, { events });
+
+    expect(response.statusCode).toBe(202);
+    const jobs = await jobsOf(orgA);
+    expect(jobs).toHaveLength(before.a + 1);
+    expect(await jobsOf(orgB)).toHaveLength(before.b);
+    // The job points at the batch the events were stored in.
+    for (const sent of events) {
+      const [row] = await rows(orgA, sent["eventId"] as string);
+      expect(jobs.map((job) => job.subject_id)).toContain(row?.["batch_id"]);
+    }
+  });
+
   it("acknowledges a retry as duplicates and stores nothing twice", async () => {
     const built = await start();
     const events = [event(), event()];
