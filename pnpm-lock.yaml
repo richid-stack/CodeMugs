@@ -73,6 +73,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/auth
 
+  apps/worker:
+    dependencies:
+      '@codemugs/configuration':
+        specifier: workspace:*
+        version: link:../../packages/configuration
+      '@codemugs/ingestion':
+        specifier: workspace:*
+        version: link:../ingestion
+      '@codemugs/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+    devDependencies:
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+
   packages/auth:
     dependencies:
       '@codemugs/storage':
