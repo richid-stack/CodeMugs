@@ -62,6 +62,9 @@ importers:
       '@codemugs/event-schemas':
         specifier: workspace:*
         version: link:../../packages/event-schemas
+      '@codemugs/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage

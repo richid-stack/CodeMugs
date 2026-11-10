@@ -22,7 +22,7 @@ const APPEND_ONLY_TABLES: ReadonlySet<string> = new Set(["audit_log", "events"])
  * Tables whose rows may change but are never deleted by a runtime role. Deleting them for
  * retention needs a deliberate, audited path that does not exist yet (release gate 15).
  */
-const KEPT_TABLES: ReadonlySet<string> = new Set(["jobs"]);
+const KEPT_TABLES: ReadonlySet<string> = new Set(["jobs", "event_aggregates"]);
 
 /**
  * The only tables the dispatcher role may read and update, across tenants. It exists so workers
@@ -53,11 +53,12 @@ const DISPATCHER_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * For tables that more than one role may update: the columns that may change after insert. Every
- * other column (who owns the row, what kind of job it is) is fixed for life, for both roles.
+ * For tables whose rows change after insert: the columns that may change. Every other column
+ * (whose row it is, what a job is, which hour a count is for) is fixed for life, for every role.
  */
 const UPDATABLE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   jobs: ["status", "available_at", "attempts", "lease_token", "last_error_code", "finished_at"],
+  event_aggregates: ["event_count", "updated_at"],
 };
 
 const TENANT_SETTING = "app.organisation_id";

@@ -1,6 +1,6 @@
 # Data model overview (draft)
 
-> **Draft.** Only the tenancy, identity and event foundation exists as a schema: `organisations`, `projects`, `api_keys`, `audit_log`, `events` and `jobs`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
+> **Draft.** Only the tenancy, identity and event foundation exists as a schema: `organisations`, `projects`, `api_keys`, `audit_log`, `events`, `jobs` and `event_aggregates`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
 
 ## Rules for every table
 
@@ -11,6 +11,7 @@
 - **Every store supports deletion and retention** from the first migration. See [data classification](../security/data-classification.md). `events` has indexes for retention by age but no deletion path yet: the application cannot delete events, and a deliberate, audited path is still to be built (release gate 15).
 - **Events are immutable.** `events` allows the application to insert and read only. The primary key `(organisation_id, project_id, event_id)` is the idempotency key ([ADR 0011](../architecture/decisions/0011-event-ingestion.md)).
 - **Jobs are pointers, never data.** `jobs` holds a job's kind, the id of the tenant row it is about and its progress, and has no payload column, so a worker role that can see every tenant's jobs learns nothing it can misuse. That role (`codemugs_dispatcher`) can read and advance `jobs` and cannot touch any other table ([ADR 0012](../architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)). Jobs are kept, not deleted; retention is release gate 15.
+- **Derived counts are recomputed, never added to.** `event_aggregates` holds the number of events per project and UTC hour, written by a job that counts the events themselves and replaces the stored number, so a retry, a replay or a crash cannot count anything twice. The application can read, insert and change only the count, and cannot delete ([ADR 0013](../architecture/decisions/0013-event-processing.md)). Events carry the id of the batch they arrived in (`batch_id`), which is what the job points at.
 - **High-volume telemetry does not live in the primary database for long.** See [ADR 0005](../architecture/decisions/0005-modular-monolith-and-postgres-first-storage.md).
 
 ## Entity groups

@@ -35,7 +35,7 @@ Most directories are placeholders. Read a module's `README.md` and check its **S
 
 - Strict TypeScript, ESM, relative imports with `.js` extensions. Tests are colocated as `*.test.ts`, and failure paths are tested, not just the happy path.
 - Exact dependency versions. Do not add dependencies casually. TypeScript stays below 6.1 until typescript-eslint supports it.
-- A job holds the id of a tenant row, never customer data, and a failure is a short code, never a message (ADR 0012). Nothing grants the `codemugs_dispatcher` role more than the `jobs` table.
+- A job holds an opaque id that points at tenant data (a row, or a batch of rows), never customer data, and a failure is a short code, never a message (ADR 0012). Nothing grants the `codemugs_dispatcher` role more than the `jobs` table.
 - Significant architecture decisions get a record in `docs/architecture/decisions/`.
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`).
 - Docs distinguish what exists from what is planned, and mark drafts as drafts.

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createOrganisation, createProject, issueApiKey } from "@codemugs/auth";
 import { createPool, type Pool } from "@codemugs/storage";
-import { adminDatabaseUrl, createTestDatabase, type TestDatabase } from "@codemugs/storage/testing";
+import {
+  adminDatabaseUrl,
+  APP_ROLE,
+  createTestDatabase,
+  type TestDatabase,
+} from "@codemugs/storage/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { recordEvents, type IngestResult, type IngestScope } from "./record.js";
 
@@ -367,6 +372,126 @@ describeDatabase("recording events in PostgreSQL", () => {
     it("cannot be pointed at another organisation's project", async () => {
       const crossed: IngestScope = { ...a, projectId: b.projectId };
       await expect(recordEvents(app, crossed, { events: [event()] })).rejects.toThrow();
+    });
+  });
+
+  describe("the job that processes a batch", () => {
+    interface JobRow {
+      id: string;
+      subject_id: string;
+      status: string;
+      organisation_id: string;
+    }
+    const jobsOf = async (scope: IngestScope): Promise<JobRow[]> =>
+      (
+        await admin.query<JobRow>(
+          `SELECT id, subject_id, status, organisation_id FROM jobs
+            WHERE organisation_id = $1 AND kind = 'events.aggregate' ORDER BY created_at, id`,
+          [scope.organisationId],
+        )
+      ).rows;
+    const batchIdsOf = async (
+      scope: IngestScope,
+      eventIds: unknown[],
+    ): Promise<Array<string | null>> =>
+      (
+        await admin.query<{ batch_id: string | null }>(
+          `SELECT batch_id FROM events WHERE organisation_id = $1 AND event_id = ANY ($2::uuid[])
+            ORDER BY event_id`,
+          [scope.organisationId, eventIds],
+        )
+      ).rows.map((row) => row.batch_id);
+
+    it("is enqueued once for a stored batch, pointing at the id its events carry", async () => {
+      const before = (await jobsOf(a)).length;
+      const events = [event(), event(), event()];
+      await record(a, events);
+
+      const jobs = await jobsOf(a);
+      expect(jobs).toHaveLength(before + 1);
+      const job = jobs[jobs.length - 1] as JobRow;
+      expect(job).toMatchObject({ status: "queued", organisation_id: a.organisationId });
+      expect(
+        await batchIdsOf(
+          a,
+          events.map((sent) => sent["eventId"]),
+        ),
+      ).toEqual([job.subject_id, job.subject_id, job.subject_id]);
+    });
+
+    it("gives every request its own batch and its own job", async () => {
+      const first = event();
+      const second = event();
+      const before = (await jobsOf(a)).length;
+      await record(a, [first]);
+      await record(a, [second]);
+      const [one, two] = await batchIdsOf(a, [first["eventId"], second["eventId"]]);
+      expect(one).not.toBeNull();
+      expect(two).not.toBeNull();
+      expect(one).not.toBe(two);
+      expect(await jobsOf(a)).toHaveLength(before + 2);
+    });
+
+    it("is enqueued for the key's organisation and no other", async () => {
+      const before = { a: (await jobsOf(a)).length, b: (await jobsOf(b)).length };
+      await record(b, [event()]);
+      expect(await jobsOf(a)).toHaveLength(before.a);
+      expect(await jobsOf(b)).toHaveLength(before.b + 1);
+    });
+
+    it("is not enqueued again for a batch that stored nothing new", async () => {
+      const events = [event(), event()];
+      await record(a, events);
+      const before = (await jobsOf(a)).length;
+      const again = await record(a, events);
+      expect(again).toMatchObject({ accepted: 0, duplicates: 2 });
+      expect(await jobsOf(a)).toHaveLength(before);
+    });
+
+    it("is not enqueued for a batch in which every event was rejected", async () => {
+      const before = (await jobsOf(a)).length;
+      const result = await record(a, [event({ type: "" }), event({ schemaVersion: 99 })]);
+      expect(result.rejected).toBe(2);
+      expect(await jobsOf(a)).toHaveLength(before);
+    });
+
+    it("covers only the new events of a batch that also repeats old ones", async () => {
+      const old = event();
+      await record(a, [old]);
+      const [oldBatch] = await batchIdsOf(a, [old["eventId"]]);
+      const fresh = event();
+      const before = (await jobsOf(a)).length;
+      await record(a, [old, fresh]);
+
+      const jobs = await jobsOf(a);
+      expect(jobs).toHaveLength(before + 1);
+      const [freshBatch] = await batchIdsOf(a, [fresh["eventId"]]);
+      expect((jobs[jobs.length - 1] as JobRow).subject_id).toBe(freshBatch);
+      // The repeated event keeps the batch it first arrived in.
+      expect((await batchIdsOf(a, [old["eventId"]]))[0]).toBe(oldBatch);
+      expect(freshBatch).not.toBe(oldBatch);
+    });
+
+    it("stores nothing when the job cannot be enqueued, so the client retries", async () => {
+      const events = [event(), event()];
+      const before = (await jobsOf(a)).length;
+      await admin.query(`REVOKE INSERT ON jobs FROM ${APP_ROLE}`);
+      try {
+        await expect(recordEvents(app, a, { events })).rejects.toThrow();
+      } finally {
+        await admin.query(`GRANT INSERT ON jobs TO ${APP_ROLE}`);
+      }
+      for (const sent of events) expect(await stored(a, sent["eventId"] as string)).toEqual([]);
+      expect(await jobsOf(a)).toHaveLength(before);
+      // The same batch goes through once the queue works again.
+      expect(await record(a, events)).toMatchObject({ accepted: 2 });
+    });
+
+    it("enqueues nothing when the events themselves cannot be stored", async () => {
+      const before = (await jobsOf(a)).length;
+      const wrongKey: IngestScope = { ...a, apiKeyId: randomUUID() };
+      await expect(recordEvents(app, wrongKey, { events: [event()] })).rejects.toThrow();
+      expect(await jobsOf(a)).toHaveLength(before);
     });
   });
 });

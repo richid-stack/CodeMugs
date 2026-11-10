@@ -30,7 +30,7 @@ export interface ClaimedJob {
   jobId: string;
   organisationId: string;
   kind: string;
-  /** The tenant row the job is about, or null. Never any other data: look it up in the tenant. */
+  /** What the job is about (a tenant row, or a batch of rows), or null. Never any other data: look it up in the tenant. */
   subjectId: string | null;
   /** 1 for the first try. */
   attempt: number;

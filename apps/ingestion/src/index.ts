@@ -1,4 +1,5 @@
 export { MAX_EVENTS_PER_BATCH } from "@codemugs/event-schemas";
+export { aggregateEvents, aggregateEventsHandler, EVENTS_AGGREGATE_KIND } from "./aggregate.js";
 export { recordEvents } from "./record.js";
 export type {
   EventResult,

@@ -2,7 +2,7 @@
 
 A durable job queue in PostgreSQL, and a worker that runs the jobs. Background work that survives a crash, can be run again, and never leaves the tenant that owns it.
 
-**Status:** Phase 1 · Foundation (started). The library and its tests exist. Nothing starts a worker yet, ingestion does not enqueue jobs yet, and there is no handler for any real kind of work. Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
+**Status:** Phase 1 · Foundation (started). The library and its tests exist. Nothing starts a worker yet. Ingestion enqueues a job for every stored batch and one handler exists, for hourly counts ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md), in [`@codemugs/ingestion`](../../apps/ingestion/README.md)). Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
 
 ## What is here
 
@@ -32,7 +32,7 @@ await runWorker({
 
 - **A handler can run more than once for the same subject.** After a failure, after a crash, or after replay. Compute the result from the tenant's data and write it idempotently (an upsert of a recomputed value). Do not apply a delta ("add 3 to the count").
 - **Writes through `context.client` are exactly once.** They commit together with the job's completion, or are rolled back. Effects outside the database (an HTTP call, a model call) cannot be rolled back and are at least once.
-- **Never put customer data in a failure code or in a job.** A job holds its kind and the id of a tenant row, nothing else, and a failure is stored as a short code. A thrown error's message is dropped on purpose.
+- **Never put customer data in a failure code or in a job.** A job holds its kind and an opaque id that points at tenant data (a row, or a batch of rows), nothing else, and a failure is stored as a short code. A thrown error's message is dropped on purpose.
 - **Stop when `context.signal` aborts.** It fires when the lease runs out. After that another worker may take the job, and this run's transaction is rolled back if one does. Choose a lease longer than your longest handler.
 
 ## Rules for the worker's database
