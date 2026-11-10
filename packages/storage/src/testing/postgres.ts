@@ -1,6 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { runMigrations } from "../migrate.js";
+import { APP_ROLE, DISPATCHER_ROLE } from "../roles.js";
+
+// Re-exported so tests keep importing the roles from the test harness.
+export { APP_ROLE, DISPATCHER_ROLE };
 
 /**
  * Test harness for tests that need a real PostgreSQL server.
@@ -13,15 +17,6 @@ import { runMigrations } from "../migrate.js";
  * "true" (CI sets it), in which case a missing variable is a failure. A silent skip would let
  * the isolation tests go unrun while everything looks green.
  */
-
-/** The restricted runtime role. In real deployments infrastructure creates it, not a migration. */
-export const APP_ROLE = "codemugs_app";
-
-/**
- * The role worker processes use to find the next job in any tenant (ADR 0012). It can see the
- * jobs table and nothing else. The API never holds it.
- */
-export const DISPATCHER_ROLE = "codemugs_dispatcher";
 
 // A throwaway password for roles on a throwaway local test server. Same convention as
 // infrastructure/docker/compose.dev.yml. It is never used outside tests.

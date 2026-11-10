@@ -14,6 +14,11 @@ export interface PoolOptions {
   statementTimeoutMs?: number;
   /** Ends sessions that sit idle inside a transaction. Default 30 seconds. */
   idleInTransactionTimeoutMs?: number;
+  /**
+   * Shown as `application_name` in `pg_stat_activity`, so an operator can tell which process a
+   * connection belongs to. A short fixed name, never a value from a request.
+   */
+  applicationName?: string;
   /** Called when an idle connection fails, for example when the database restarts. */
   onError?: (error: Error) => void;
 }
@@ -25,6 +30,7 @@ export function createPool(options: PoolOptions): Pool {
     connectionTimeoutMillis: options.connectionTimeoutMs ?? 5_000,
     statement_timeout: options.statementTimeoutMs ?? 30_000,
     idle_in_transaction_session_timeout: options.idleInTransactionTimeoutMs ?? 30_000,
+    ...(options.applicationName === undefined ? {} : { application_name: options.applicationName }),
   });
   // Without a listener, an error on an idle connection is an unhandled 'error' event and
   // Node would terminate the process. The pool discards the failed connection by itself.

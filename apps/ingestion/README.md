@@ -2,7 +2,7 @@
 
 Validates events and records them durably. A library for now, used by the [API](../api/README.md) for `POST /v1/events`. A separate gateway process (the OpenTelemetry endpoint, its own scaling) is planned and can use the same code.
 
-**Status:** Phase 1 · Foundation (started). Validation, storage and the first processing exist: a stored batch enqueues a [job](../../packages/jobs/README.md) and a handler turns it into hourly counts. A worker process that runs the handler, redaction, rate limits and quotas do not. Decisions: [ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md), [ADR 0013](../../docs/architecture/decisions/0013-event-processing.md).
+**Status:** Phase 1 · Foundation (started). Validation, storage and the first processing exist: a stored batch enqueues a [job](../../packages/jobs/README.md) and a handler turns it into hourly counts. The [worker process](../worker/README.md) runs the handler. Redaction, rate limits and quotas do not exist. Decisions: [ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md), [ADR 0013](../../docs/architecture/decisions/0013-event-processing.md).
 
 ## Interface
 
@@ -31,7 +31,6 @@ Each event ends up `accepted`, `duplicate` (already stored, or earlier in the sa
 
 - It does not redact. Attributes are stored as sent, and may contain personal data. The privacy filter described in the [data classification](../../docs/security/data-classification.md) is not built.
 - It does not limit rates or quotas, and does not delete or expire events. Counts are recomputed from the events, so deleting events will need a decision about the counts first.
-- Nothing runs the handler outside tests yet: there is no worker process.
 - A retried event whose content differs from the first copy is not detected. The first copy wins.
 
 ## Development

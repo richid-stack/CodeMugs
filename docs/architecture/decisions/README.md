@@ -15,5 +15,6 @@
 | [0011](0011-event-ingestion.md)                             | Event ingestion: the contract and the storage                 | Accepted |
 | [0012](0012-jobs-and-cross-tenant-claiming.md)              | Jobs: a PostgreSQL queue, and how workers find work           | Accepted |
 | [0013](0013-event-processing.md)                            | Event processing: one job per batch, recomputed hourly counts | Accepted |
+| [0014](0014-worker-process.md)                              | The worker process: two logins, checked before it starts      | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

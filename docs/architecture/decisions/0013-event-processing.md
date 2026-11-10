@@ -38,7 +38,7 @@ The first piece of processing is deliberately small: the number of events per pr
 - **Retention changes the meaning.** The count is computed from the events. When events can be deleted (gate 15), recomputing an old hour would lower its count. The retention design has to decide whether counts of closed hours are kept as they are, and must not let a replay quietly rewrite them.
 - **Advisory locks are not covered by row-level security.** They carry no data, but code that can run its own SQL as the application role could hold one and stall processing for a project. It is the same class of risk as [ADR 0006](0006-tenant-isolation.md) records for that role.
 - **Only the total is counted.** There is no split by event type or environment, and nothing detects anything.
-- **Nothing runs a worker outside the tests.** The job is enqueued and the handler is proven, but there is no worker process and no setting for the dispatcher's connection. That is the next change.
+- **A worker process was not part of this decision.** The job is enqueued and the handler is proven, and [ADR 0014](0014-worker-process.md) adds the process that runs it.
 - **No rate limits, quotas, redaction or retention of `jobs`** (the table gets a row per accepted batch), and no alert on dead jobs (gate 13).
 - **Crash recovery is simulated at the queue.** The tests take a job and let the lease run out, and fail an attempt after the handler has written. They do not kill a process in the middle of its transaction.
 

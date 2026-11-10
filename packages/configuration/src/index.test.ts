@@ -1,6 +1,6 @@
 import { format, inspect } from "node:util";
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadApiConfig, Secret } from "./index.js";
+import { ConfigError, loadApiConfig, loadWorkerConfig, Secret } from "./index.js";
 
 function captureError(fn: () => unknown): unknown {
   try {
@@ -110,5 +110,113 @@ describe("Secret", () => {
     expect(secret.reveal()).toBe("value-123");
     expect(secret.toString()).toBe("[redacted]");
     expect(secret.toJSON()).toBe("[redacted]");
+  });
+});
+
+describe("loadWorkerConfig", () => {
+  const app =
+    "postgres://codemugs_app:app-password-that-must-stay-hidden@db.internal:5432/codemugs";
+  const dispatcher =
+    "postgres://codemugs_dispatcher:dispatcher-password-that-must-stay-hidden@db.internal:5432/codemugs";
+  const required = { DATABASE_URL: app, DISPATCHER_DATABASE_URL: dispatcher };
+
+  function issuesOf(env: Record<string, string | undefined>): readonly string[] {
+    const error = captureError(() => loadWorkerConfig(env));
+    if (!(error instanceof ConfigError)) throw new Error("expected a ConfigError");
+    return error.issues;
+  }
+
+  it("applies defaults for everything but the two connections", () => {
+    const config = loadWorkerConfig(required);
+    expect(config).toMatchObject({
+      nodeEnv: "development",
+      logLevel: "info",
+      shutdownTimeoutMs: 30_000,
+      concurrency: 4,
+      pollIntervalMs: 1_000,
+      leaseSeconds: 60,
+    });
+    expect(config.databaseUrl.reveal()).toBe(app);
+    expect(config.dispatcherDatabaseUrl.reveal()).toBe(dispatcher);
+  });
+
+  it("reads the tuning variables as numbers", () => {
+    const config = loadWorkerConfig({
+      ...required,
+      WORKER_CONCURRENCY: "8",
+      WORKER_POLL_INTERVAL_MS: "250",
+      WORKER_LEASE_SECONDS: "120",
+      SHUTDOWN_TIMEOUT_MS: "5000",
+    });
+    expect(config).toMatchObject({
+      concurrency: 8,
+      pollIntervalMs: 250,
+      leaseSeconds: 120,
+      shutdownTimeoutMs: 5_000,
+    });
+  });
+
+  it("requires both connections, in every environment, and names them", () => {
+    for (const nodeEnv of ["development", "test", "production"]) {
+      const issues = issuesOf({ NODE_ENV: nodeEnv });
+      expect(issues.some((issue) => issue.startsWith("DATABASE_URL:"))).toBe(true);
+      expect(issues.some((issue) => issue.startsWith("DISPATCHER_DATABASE_URL:"))).toBe(true);
+    }
+    expect(issuesOf({ DATABASE_URL: app }).join("\n")).toContain("DISPATCHER_DATABASE_URL");
+    expect(issuesOf({ DISPATCHER_DATABASE_URL: dispatcher }).join("\n")).toContain("DATABASE_URL");
+  });
+
+  it("treats an empty connection string as missing", () => {
+    const issues = issuesOf({ DATABASE_URL: "", DISPATCHER_DATABASE_URL: dispatcher });
+    expect(issues).toContain("DATABASE_URL: is required");
+  });
+
+  it("refuses the same connection for both roles", () => {
+    const issues = issuesOf({ DATABASE_URL: app, DISPATCHER_DATABASE_URL: app });
+    expect(issues.some((issue) => issue.startsWith("DISPATCHER_DATABASE_URL:"))).toBe(true);
+  });
+
+  it("rejects out-of-range tuning values", () => {
+    const issues = issuesOf({
+      ...required,
+      WORKER_CONCURRENCY: "0",
+      WORKER_POLL_INTERVAL_MS: "5",
+      WORKER_LEASE_SECONDS: "0",
+    });
+    for (const name of ["WORKER_CONCURRENCY", "WORKER_POLL_INTERVAL_MS", "WORKER_LEASE_SECONDS"]) {
+      expect(issues.some((issue) => issue.startsWith(`${name}:`))).toBe(true);
+    }
+    expect(issuesOf({ ...required, WORKER_CONCURRENCY: "101" })[0]).toMatch(/^WORKER_CONCURRENCY:/);
+    expect(issuesOf({ ...required, WORKER_LEASE_SECONDS: "86401" })[0]).toMatch(
+      /^WORKER_LEASE_SECONDS:/,
+    );
+  });
+
+  it("never puts a rejected value, or either password, in the error", () => {
+    const bad = "mysql://root:root-password-that-must-stay-hidden@db.internal/codemugs";
+    const error = captureError(() =>
+      loadWorkerConfig({ DATABASE_URL: bad, DISPATCHER_DATABASE_URL: bad, LOG_LEVEL: bad }),
+    );
+    if (!(error instanceof ConfigError)) throw new Error("expected a ConfigError");
+    expect(error.message).not.toContain("root-password");
+    expect(error.message).not.toContain(bad);
+
+    const same = captureError(() =>
+      loadWorkerConfig({ DATABASE_URL: app, DISPATCHER_DATABASE_URL: app }),
+    );
+    if (!(same instanceof ConfigError)) throw new Error("expected a ConfigError");
+    expect(same.message).not.toContain("app-password");
+  });
+
+  it("keeps both connection strings out of anything that prints the configuration", () => {
+    const config = loadWorkerConfig(required);
+    for (const text of [
+      JSON.stringify(config),
+      inspect(config, { depth: 5 }),
+      format("%o", config),
+    ]) {
+      expect(text).not.toContain("app-password-that-must-stay-hidden");
+      expect(text).not.toContain("dispatcher-password-that-must-stay-hidden");
+    }
   });
 });

@@ -25,7 +25,7 @@ Step 4 of the [build plan](../../engineering/roadmap.md) is event ingestion. Rel
 - **No rate limits and no per-tenant quotas** (open question 10). One key can write as fast as the database allows, up to 500 events and 1 MiB a request. This and the missing authentication limit mean the API must not be exposed to the internet yet.
 - **No redaction.** The data classification says telemetry is redacted in SDKs and again at the gateway, because it can hold personal data by accident. The gateway step does not exist, so attributes are stored exactly as sent. Real customer SDK traffic should not be pointed at this until it does.
 - **No retention and no deletion** (open question 5, release gate 15). The table only grows.
-- **Nothing reads events back.** There is no query endpoint. Ingestion enqueues one job per stored batch and a handler turns it into hourly counts ([ADR 0013](0013-event-processing.md)); no worker process runs it yet.
+- **Nothing reads events back.** There is no query endpoint. Ingestion enqueues one job per stored batch and a handler turns it into hourly counts ([ADR 0013](0013-event-processing.md)); the [worker process](0014-worker-process.md) runs it.
 - **The timestamp window is a product choice.** An SDK on a device with a wrong clock loses events with `occurred_at_out_of_range`. It can be loosened if that proves wrong.
 - **Stored attributes are what JavaScript makes of the JSON.** Numbers are doubles, an attribute named `__proto__` is dropped, and timestamps keep millisecond precision.
 - **Throughput is unmeasured.** There is no load test (release gate 18).

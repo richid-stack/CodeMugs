@@ -1,0 +1,27 @@
+{
+  "name": "@codemugs/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "node dist/main.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@codemugs/configuration": "workspace:*",
+    "@codemugs/ingestion": "workspace:*",
+    "@codemugs/jobs": "workspace:*",
+    "@codemugs/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "@codemugs/auth": "workspace:*"
+  }
+}

@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { APP_ROLE, DISPATCHER_ROLE } from "./postgres.js";
+import { APP_ROLE, DISPATCHER_ROLE } from "../roles.js";
 
 /**
  * Checks the shape of the schema against the tenancy rules in ADR 0006 and the dispatcher rules in

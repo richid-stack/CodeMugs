@@ -41,7 +41,7 @@ It also needs something [ADR 0006](0006-tenant-isolation.md) makes hard. Every t
 - **No priorities, and no delayed jobs.** A new job is due at once.
 - **No wake-up.** Workers poll, so a job waits up to the interval, and each worker costs one cheap indexed query per interval. `LISTEN`/`NOTIFY` can cut the latency later.
 - **No history of attempts.** Only the last error code is kept, and a success keeps the code of the last failed attempt as a trace of retries.
-- **No process that runs a worker yet.** The library is complete, but nothing starts it and the dispatcher role has no connection setting yet. That comes with the first real job.
+- **The process that runs a worker came later.** The library was complete but nothing started it, and the dispatcher role had no connection setting. [ADR 0014](0014-worker-process.md) adds the process.
 - **No alerting on dead jobs** (release gate 13) and **no retention of finished jobs** (gate 15). The table only grows.
 - **Throughput, the due index and table bloat from frequent updates are unmeasured** (gate 18). Behind a connection pooler it is untested, as for tenant isolation.
 - **Handlers' effects outside the database are at least once**, as in decision 5.

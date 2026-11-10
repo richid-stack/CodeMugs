@@ -2,7 +2,7 @@
 
 A durable job queue in PostgreSQL, and a worker that runs the jobs. Background work that survives a crash, can be run again, and never leaves the tenant that owns it.
 
-**Status:** Phase 1 · Foundation (started). The library and its tests exist. Nothing starts a worker yet. Ingestion enqueues a job for every stored batch and one handler exists, for hourly counts ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md), in [`@codemugs/ingestion`](../../apps/ingestion/README.md)). Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
+**Status:** Phase 1 · Foundation (started). The library and its tests exist. The process that runs it is [`@codemugs/worker`](../../apps/worker/README.md) ([ADR 0014](../../docs/architecture/decisions/0014-worker-process.md)). Ingestion enqueues a job for every stored batch and one handler exists, for hourly counts ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md), in [`@codemugs/ingestion`](../../apps/ingestion/README.md)). Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
 
 ## What is here
 
@@ -43,7 +43,7 @@ await runWorker({
 
 ## Not here yet
 
-Per-tenant fairness and quotas, priorities, delayed jobs, lease extension (heartbeats), wake-ups instead of polling, a history of attempts, a process that runs a worker, alerting on dead jobs, retention of finished jobs, and any measurement of throughput. The list and the reasons are in ADR 0012.
+Per-tenant fairness and quotas, priorities, delayed jobs, lease extension (heartbeats), wake-ups instead of polling, a history of attempts, alerting on dead jobs, retention of finished jobs, and any measurement of throughput. The list and the reasons are in ADR 0012.
 
 ## Running the tests
 
