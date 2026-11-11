@@ -68,8 +68,12 @@ export interface SandboxDriver {
 export type SandboxErrorCode =
   /** The driver cannot run here, or was asked to run while it was not available. */
   | "unavailable"
+  /** The source directory is not a directory inside the workspace, once links are resolved. */
+  | "source_not_allowed"
   /** The sandbox could not be started. */
   | "start_failed"
+  /** The sandbox started but how the run ended could not be found out. */
+  | "run_failed"
   /** The run ended but something it created could not be removed. */
   | "cleanup_failed";
 
@@ -90,6 +94,8 @@ export class SandboxError extends Error {
 
 const MESSAGES: Record<SandboxErrorCode, string> = {
   unavailable: "the sandbox driver is not available",
+  source_not_allowed: "the source directory is not allowed",
   start_failed: "the sandbox could not be started",
+  run_failed: "the sandbox run could not be completed",
   cleanup_failed: "the sandbox could not be cleaned up",
 };

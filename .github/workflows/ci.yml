@@ -48,6 +48,11 @@ jobs:
       # A missing database must fail the run, never skip the isolation tests silently.
       REQUIRE_DATABASE_TESTS: "true"
       CODEMUGS_TEST_DATABASE_URL: postgres://postgres:codemugs_dev_only@localhost:5432/postgres
+      # The same for the sandbox driver: no docker daemon, or no image, must fail the run. The
+      # image is alpine 3.22 as the registry returned it on 2026-11-11, pinned by digest; docker
+      # checks the digest when it pulls (ADR 0017).
+      REQUIRE_DOCKER_TESTS: "true"
+      CODEMUGS_TEST_SANDBOX_IMAGE: docker.io/library/alpine@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -56,6 +61,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Pull the sandbox test image
+        run: docker pull "$CODEMUGS_TEST_SANDBOX_IMAGE"
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint

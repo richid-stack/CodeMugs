@@ -30,14 +30,21 @@ describe("isolationAtLeast", () => {
 });
 
 describe("SandboxError", () => {
-  const codes: SandboxErrorCode[] = ["unavailable", "start_failed", "cleanup_failed"];
+  const codes: SandboxErrorCode[] = [
+    "unavailable",
+    "source_not_allowed",
+    "start_failed",
+    "run_failed",
+    "cleanup_failed",
+  ];
 
   it.each(codes)("%s has a fixed sentence and carries the code", (code) => {
     const error = new SandboxError(code);
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("SandboxError");
     expect(error.code).toBe(code);
-    expect(error.message).toMatch(/^the sandbox( driver)? (is|could) not /);
+    expect(error.message).toMatch(/^the (sandbox|source directory) /);
+    expect(error.message).toMatch(/ not /);
   });
 
   it("says something different for each code", () => {
