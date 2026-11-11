@@ -32,7 +32,13 @@ const out = (fd, text) => {
 };
 if (verb === "version") process.exit(cfg.version ?? 0);
 else if (verb === "create") process.exit(cfg.create ?? 0);
-else if (verb === "kill") { if (!cfg.killIgnored) fs.writeFileSync(killed, ""); process.exit(cfg.kill ?? 0); }
+else if (verb === "kill") {
+  if (!cfg.killIgnored) fs.writeFileSync(killed, "");
+  setTimeout(() => {
+    fs.appendFileSync(path.join(dir, "calls.jsonl"), JSON.stringify({ args: ["kill-finished"], env: [] }) + "\\n");
+    process.exit(cfg.kill ?? 0);
+  }, cfg.killDelayMs ?? 0);
+}
 else if (verb === "rm") process.exit(cfg.rm ?? 0);
 else if (verb === "inspect") {
   out(1, cfg.inspect ?? JSON.stringify({ Running: false, OOMKilled: false, ExitCode: cfg.exitCode ?? 0 }));
@@ -53,6 +59,7 @@ interface Scenario {
   create?: number;
   kill?: number;
   killIgnored?: boolean;
+  killDelayMs?: number;
   rm?: number;
   inspect?: string;
   inspectExit?: number;
@@ -228,7 +235,14 @@ describe("limits that are reached", () => {
     expect(result).toMatchObject({ outcome: "timed_out", exitCode: null });
     expect(Date.now() - started).toBeGreaterThanOrEqual(950);
     expect(Date.now() - started).toBeLessThan(5_000);
-    expect(verbs(await t.calls())).toEqual(["create", "start", "kill", "inspect", "rm"]);
+    expect(verbs(await t.calls())).toEqual([
+      "create",
+      "start",
+      "kill",
+      "kill-finished",
+      "inspect",
+      "rm",
+    ]);
   });
 
   it("ends the docker client itself if the kill does not end it, and still cleans up", async () => {
@@ -248,7 +262,29 @@ describe("limits that are reached", () => {
     expect(result.stdout).toHaveLength(1_000);
     expect(result.stdoutTruncated).toBe(true);
     expect(result.stderrTruncated).toBe(false);
-    expect(verbs(await t.calls())).toEqual(["create", "start", "kill", "inspect", "rm"]);
+    expect(verbs(await t.calls())).toEqual([
+      "create",
+      "start",
+      "kill",
+      "kill-finished",
+      "inspect",
+      "rm",
+    ]);
+  });
+
+  it("waits for the kill to finish before it reads the state and removes the container", async () => {
+    // The fake docker client ends at once here, while the kill is still going on.
+    const t = await setup({ floodStdout: 200_000, killDelayMs: 400 });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+    expect(result.outcome).toBe("output_limit_exceeded");
+    expect(verbs(await t.calls())).toEqual([
+      "create",
+      "start",
+      "kill",
+      "kill-finished",
+      "inspect",
+      "rm",
+    ]);
   });
 
   it("does the same for standard error", async () => {

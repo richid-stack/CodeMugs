@@ -1,7 +1,8 @@
 import type { SandboxRunRequest } from "../request.js";
 
 /** `nobody` on the usual images: a user and a group that own nothing. */
-const UNPRIVILEGED_USER = "65534:65534";
+const UNPRIVILEGED_UID = 65534;
+const UNPRIVILEGED_GID = 65534;
 
 /** The label every container of ours carries, so that a leftover one can be found and removed. */
 export const SANDBOX_LABEL = "codemugs.sandbox=true";
@@ -15,7 +16,9 @@ export const SANDBOX_LABEL = "codemugs.sandbox=true";
  *   any, and a user that owns nothing.
  * - Memory, swap (none: the same value), processes, processors, open files and core files are
  *   limited, and the output is not kept by the daemon (it would fill the host's disk).
- * - The only writable place is a size-limited memory filesystem that cannot hold programs to run.
+ * - The only writable place is a size-limited memory filesystem that cannot hold programs to run,
+ *   and that only the unprivileged user can use. (Docker makes it owned by root unless told
+ *   otherwise, which the real daemon showed: the user could not write to it.)
  * - The source is a read-only bind mount, written with `--mount` (which refuses a missing path)
  *   and not `-v` (which would create it).
  * - The program is the entrypoint and the rest of the command follows the image, where an item
@@ -40,7 +43,7 @@ export function dockerCreateArguments(request: SandboxRunRequest, containerName:
     "--read-only",
     "--cap-drop=ALL",
     "--security-opt=no-new-privileges",
-    `--user=${UNPRIVILEGED_USER}`,
+    `--user=${UNPRIVILEGED_UID}:${UNPRIVILEGED_GID}`,
     `--pids-limit=${limits.pids}`,
     `--memory=${memory}`,
     `--memory-swap=${memory}`,
@@ -48,7 +51,7 @@ export function dockerCreateArguments(request: SandboxRunRequest, containerName:
     "--ulimit=nofile=1024:1024",
     "--ulimit=core=0:0",
     "--log-driver=none",
-    `--tmpfs=${mounts.scratch.containerPath}:rw,noexec,nosuid,nodev,size=${mounts.scratch.sizeMb}m`,
+    `--tmpfs=${mounts.scratch.containerPath}:rw,noexec,nosuid,nodev,mode=0700,uid=${UNPRIVILEGED_UID},gid=${UNPRIVILEGED_GID},size=${mounts.scratch.sizeMb}m`,
   ];
   if (mounts.source !== undefined && sourceDirectory !== null) {
     args.push(

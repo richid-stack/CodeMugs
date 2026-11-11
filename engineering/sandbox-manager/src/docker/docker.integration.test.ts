@@ -158,9 +158,12 @@ suite("the hardened container driver, against a real docker daemon", () => {
 
   describe("what it can write", () => {
     it("cannot write to the root filesystem", async () => {
-      const result = await sh("touch /probe 2>&1; echo status=$?");
+      const result = await sh(
+        'touch /probe 2>&1; echo status=$?; awk \'$5 == "/" { print "mount:" $6 }\' /proc/self/mountinfo',
+      );
       expect(result.stdout).toContain("Read-only file system");
       expect(result.stdout).toContain("status=1");
+      expect(result.stdout).toMatch(/mount:ro[,\n]/);
     });
 
     it("can write to the scratch space, but cannot run a program from it", async () => {
@@ -184,12 +187,15 @@ suite("the hardened container driver, against a real docker daemon", () => {
     });
 
     it("sees the source and cannot change it", async () => {
+      // The shell reports a failed redirection itself, so the whole group is redirected.
       const result = await sh(
-        "cat /workspace/hello.txt; echo x > /workspace/new 2>&1; echo status=$?",
+        'cat /workspace/hello.txt; { echo x > /workspace/new; } 2>&1; echo status=$?; { echo x >> /workspace/hello.txt; } 2>&1; echo status=$?; awk \'$5 == "/workspace" { print "mount:" $6 }\' /proc/self/mountinfo',
       );
-      expect(result.stdout).toContain("hello from the source\n");
-      expect(result.stdout).toContain("Read-only file system");
+      expect(result.stdout).toMatch(/^hello from the source\n/);
+      expect(result.stdout.match(/status=1/g)).toHaveLength(2);
+      expect(result.stdout).toMatch(/mount:ro[,\n]/);
       await expect(readFile(join(source, "new"))).rejects.toThrow();
+      expect(await readFile(join(source, "hello.txt"), "utf8")).toBe("hello from the source\n");
     });
   });
 
@@ -205,17 +211,23 @@ suite("the hardened container driver, against a real docker daemon", () => {
 
   describe("limits", () => {
     it("holds a fork bomb to the number of processes the policy gives", async () => {
+      // The shell of the image stops when a fork fails. It says which attempt it was about to make
+      // before each one, so the last number is the attempt that failed: the shell and every sleep
+      // before it were running, and together they are what the limit allowed.
       const result = await sh(
-        "i=0; while [ $i -lt 300 ]; do sleep 20 & i=$((i+1)); done 2>/dev/null; echo procs=$(ls /proc | grep -c '^[0-9]'); kill $(jobs -p) 2>/dev/null; true",
+        "i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo started=$i; sleep 20 & done",
         (p) => {
           p.limits.pids = 32;
         },
       );
       expect(result.outcome).toBe("exited");
-      const counted = /procs=(\d+)/.exec(result.stdout);
-      expect(counted).not.toBeNull();
-      expect(Number(counted?.[1])).toBeLessThanOrEqual(32);
-      expect(Number(counted?.[1])).toBeGreaterThan(8);
+      const attempts = [...result.stdout.matchAll(/started=(\d+)/g)].map((match) =>
+        Number(match[1]),
+      );
+      const failed = attempts.at(-1) ?? 0;
+      expect(failed).toBeLessThan(300);
+      expect(failed).toBeLessThanOrEqual(32);
+      expect(failed).toBeGreaterThan(8);
     });
 
     it("stops a program that uses more memory than the policy gives", async () => {

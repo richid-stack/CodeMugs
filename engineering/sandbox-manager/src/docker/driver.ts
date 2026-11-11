@@ -158,12 +158,13 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
     const stderr = new Capture(limits.outputBytes);
     let reason: "timed_out" | "output_limit_exceeded" | null = null;
     let killer: NodeJS.Timeout | undefined;
+    let killing: Promise<Finished> | undefined;
 
     /** Stops the container, once, for the first reason found. */
     const stop = (why: "timed_out" | "output_limit_exceeded"): void => {
       if (reason !== null) return;
       reason = why;
-      void control(["kill", name], CONTROL_TIMEOUT_MS);
+      killing = control(["kill", name], CONTROL_TIMEOUT_MS);
       // If the docker client does not end after the kill, end it, so that cleanup can go on.
       killer = setTimeout(() => child.kill("SIGKILL"), graceMs);
     };
@@ -184,6 +185,9 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
     });
     clearTimeout(timer);
     if (killer !== undefined) clearTimeout(killer);
+    // The kill is waited for, so that nothing of ours is still running when the state is read and
+    // the container removed, and so that the order of the docker commands does not depend on timing.
+    await killing;
     if (ended === "not_started") throw new SandboxError("start_failed");
     const durationMs = Date.now() - started;
 

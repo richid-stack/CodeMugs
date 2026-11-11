@@ -44,7 +44,7 @@ describe("the arguments of docker create", () => {
       "--ulimit=nofile=1024:1024",
       "--ulimit=core=0:0",
       "--log-driver=none",
-      "--tmpfs=/scratch:rw,noexec,nosuid,nodev,size=64m",
+      "--tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=64m",
       `--mount=type=bind,src=${SOURCE},dst=/workspace,readonly`,
       "--workdir=/scratch",
       "--entrypoint=node",
@@ -63,7 +63,9 @@ describe("the arguments of docker create", () => {
     expect(result).toContain("--memory=2048m");
     expect(result).toContain("--memory-swap=2048m");
     expect(result).toContain("--pids-limit=7");
-    expect(result).toContain("--tmpfs=/tmp-area:rw,noexec,nosuid,nodev,size=3m");
+    expect(result).toContain(
+      "--tmpfs=/tmp-area:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=3m",
+    );
     expect(result).toContain("--workdir=/tmp-area");
   });
 
@@ -206,6 +208,15 @@ describe("the arguments of docker create", () => {
     for (const option of ["rw", "noexec", "nosuid", "nodev"]) {
       expect(tmpfs.split(":")[1]?.split(",")).toContain(option);
     }
+  });
+
+  it("make the scratch space belong to the user the code runs as, and to nobody else", () => {
+    const tmpfs = args().find((arg) => arg.startsWith("--tmpfs=")) ?? "";
+    const options = tmpfs.split(":")[1]?.split(",") ?? [];
+    expect(options).toContain("uid=65534");
+    expect(options).toContain("gid=65534");
+    expect(options).toContain("mode=0700");
+    expect(args()).toContain("--user=65534:65534");
   });
 
   it("label the container, so that a leftover one can be found", () => {
