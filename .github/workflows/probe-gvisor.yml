@@ -1,0 +1,90 @@
+# TEMPORARY. Reads how gVisor behaves on a hosted runner, so that the driver and its tests are
+# written from what was observed. Removed before the pull request is merged.
+name: Probe gVisor
+
+on:
+  pull_request:
+    paths: [".github/workflows/probe-gvisor.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe gVisor
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Install gVisor from the latest release and run the scenarios of the driver tests
+        run: |
+          cat > probe.sh <<'EOF'
+          set -u
+          IMG=docker.io/library/alpine@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+          docker pull -q "$IMG" >/dev/null
+          echo "### host"
+          uname -r
+          docker version --format 'docker {{.Server.Version}}'
+          docker info --format 'cgroup driver={{.CgroupDriver}} cgroup version={{.CgroupVersion}} runtimes={{json .Runtimes}}'
+          cat /etc/docker/daemon.json 2>/dev/null || echo "(no daemon.json)"
+          echo "### download"
+          ARCH=$(uname -m)
+          URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
+          mkdir dl && cd dl
+          wget -q ${URL}/gvisor.tar.zstd ${URL}/gvisor.tar.zstd.sha512
+          cat gvisor.tar.zstd.sha512
+          sha512sum -c gvisor.tar.zstd.sha512
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          ls -la /usr/local/bin | grep -i -E "runsc|gvisor|shim"
+          /usr/local/bin/runsc --version
+          cd ..
+          echo "### install"
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          sleep 3
+          cat /etc/docker/daemon.json
+          docker info --format 'runtimes={{json .Runtimes}}'
+          mkdir -p src && echo "hello from the source" > src/hello.txt
+          base=(--network=none --ipc=private --read-only --cap-drop=ALL --security-opt=no-new-privileges --user=65534:65534 --ulimit=nofile=1024:1024 --ulimit=core=0:0 --log-driver=none)
+          # r <runtime> <pids> <memory> <scratch MB> <script>
+          r() {
+            timeout 120 docker run --rm --runtime="$1" "${base[@]}" --pids-limit="$2" --memory="$3" --memory-swap="$3" --cpus=1 \
+              --tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size="$4"m --workdir=/scratch \
+              --mount type=bind,src="$PWD/src",dst=/workspace,readonly --entrypoint=sh "$IMG" -c "$5"
+            echo "[exit=$?]"
+          }
+          # o <runtime>: a program that uses too much memory, then the state docker keeps
+          o() {
+            n=probe-oom-$1
+            docker create --name "$n" --runtime="$1" "${base[@]}" --pids-limit=64 --memory=64m --memory-swap=64m --cpus=1 \
+              --tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=16m --workdir=/scratch \
+              --entrypoint=sh "$IMG" -c "x=\$(head -c 200000000 /dev/zero | tr '\\0' a); echo done" >/dev/null
+            timeout 120 docker start -a "$n"; echo "[start exit=$?]"
+            docker inspect --format '{{json .State}}' "$n"
+            docker rm -f "$n" >/dev/null
+          }
+          for rt in runc runsc; do
+            echo; echo "################ runtime=$rt"
+            echo "--- kernel"; r $rt 64 256m 16 'uname -r; cat /proc/version'
+            echo "--- ids"; r $rt 64 256m 16 'id -u; id -g; pwd; ulimit -n; ulimit -c'
+            echo "--- status"; r $rt 64 256m 16 'grep -E "^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp):" /proc/self/status'
+            echo "--- processes and devices"; r $rt 64 256m 16 'ls /proc | grep -c "^[0-9]"; for d in /dev/mem /dev/kvm /dev/sda /dev/fuse; do test -e $d && echo present:$d; done; true'
+            echo "--- network"; r $rt 64 256m 16 'ls /sys/class/net; echo ---; cat /proc/net/dev; wget -q -T 3 -O /dev/null http://1.1.1.1/ 2>&1; echo status=$?'
+            echo "--- mounts"; r $rt 64 256m 16 'awk '"'"'$5 == "/" || $5 == "/workspace" || $5 == "/scratch" { print $5, $6 }'"'"' /proc/self/mountinfo'
+            echo "--- root write"; r $rt 64 256m 16 'touch /probe 2>&1; echo status=$?'
+            echo "--- source write"; r $rt 64 256m 16 'cat /workspace/hello.txt; { echo x > /workspace/new; } 2>&1; echo status=$?; { echo x >> /workspace/hello.txt; } 2>&1; echo status=$?'
+            echo "--- scratch write and exec"; r $rt 64 256m 16 'echo hi > /scratch/f && cat /scratch/f && cp /bin/true /scratch/t && /scratch/t 2>&1; echo status=$?'
+            echo "--- scratch size"; r $rt 64 256m 8 'dd if=/dev/zero of=/scratch/big bs=1M count=64 2>&1; echo status=$?'
+            echo "--- fork loop (limit 32)"; r $rt 32 256m 16 'i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo started=$i; sleep 20 & done' | tail -n 4
+            echo "--- memory (limit 64m)"; o $rt
+            echo "--- docker socket"; r $rt 64 256m 16 'test -e /var/run/docker.sock; echo $?'
+          done
+          echo; echo "### gvisor dmesg"
+          docker run --rm --runtime=runsc "$IMG" dmesg 2>&1 | head -n 3
+          echo "### docker kill of a running gVisor container"
+          docker create --name probe-kill --runtime=runsc "${base[@]}" --entrypoint=sleep "$IMG" 120 >/dev/null
+          docker start probe-kill >/dev/null; sleep 2
+          time docker kill probe-kill
+          docker inspect --format '{{json .State}}' probe-kill
+          docker rm -f probe-kill >/dev/null
+          EOF
+          bash probe.sh 2>&1
