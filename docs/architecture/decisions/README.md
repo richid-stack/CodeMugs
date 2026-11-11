@@ -17,5 +17,6 @@
 | [0013](0013-event-processing.md)                            | Event processing: one job per batch, recomputed hourly counts | Accepted |
 | [0014](0014-worker-process.md)                              | The worker process: two logins, checked before it starts      | Accepted |
 | [0015](0015-migration-command.md)                           | The migration command: wrong login refused, failures by code  | Accepted |
+| [0016](0016-sandbox-policy-and-driver-interface.md)         | The sandbox policy and driver interface: nothing implied      | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
