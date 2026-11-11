@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SandboxError } from "../driver.js";
 import { validPolicyInput, type PolicyInput } from "../fixtures.js";
 import { SandboxRequestError } from "../policy.js";
@@ -164,6 +164,16 @@ describe("availability", () => {
     });
   });
 
+  it("runs the docker command it finds on its PATH when none is named", async () => {
+    const t = await setup();
+    const driver = createDockerDriver({
+      workspaceRoot: t.work,
+      environment: { PATH: join(t.base, "bin") },
+    });
+    expect(await driver.availability()).toEqual({ available: true });
+    expect(verbs(await t.calls())).toEqual(["version"]);
+  });
+
   it("is not available when there is no docker command", async () => {
     const { driver } = await setup({}, { dockerCommand: "/nonexistent/docker" });
     expect(await driver.availability()).toEqual({
@@ -224,6 +234,50 @@ describe("a run that ends by itself", () => {
     expect(create.at(-1)).toBe("echo hi; rm -rf /");
     expect(create.at(-2)).toBe("-c");
     expect(create).toContain("--entrypoint=sh");
+  });
+});
+
+/**
+ * Runs `action` and says how many of the timers it started were never cleared. A timer left
+ * behind keeps the process from ending for as long as the policy's time limit, and can fire for a
+ * container that no longer exists.
+ */
+async function timersLeftBy(action: () => Promise<unknown>): Promise<number> {
+  const started = vi.spyOn(globalThis, "setTimeout");
+  const cleared = vi.spyOn(globalThis, "clearTimeout");
+  try {
+    await action();
+    const done = new Set<unknown>(cleared.mock.calls.map(([handle]) => handle));
+    return started.mock.results.filter((result) => !done.has(result.value)).length;
+  } finally {
+    started.mockRestore();
+    cleared.mockRestore();
+  }
+}
+
+describe("what a run leaves behind", () => {
+  it("is no timer, after a run that ended by itself", async () => {
+    const t = await setup({ stdout: "done" });
+    const left = await timersLeftBy(async () => {
+      expect((await t.driver.run(t.request())).outcome).toBe("exited");
+    });
+    expect(left).toBe(0);
+  });
+
+  it("is no timer, after a run that was stopped for printing too much", async () => {
+    const t = await setup({ floodStdout: 200_000 }, { stopGraceMs: 60_000 });
+    const left = await timersLeftBy(async () => {
+      const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+      expect(result.outcome).toBe("output_limit_exceeded");
+    });
+    expect(left).toBe(0);
+  });
+
+  it("is no kill of a container that has already ended", async () => {
+    const t = await setup({ stdout: "done" });
+    await t.driver.run(t.request({ policy: policyWith({ wallClockSeconds: 1 }) }));
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    expect(verbs(await t.calls())).toEqual(["create", "start", "inspect", "rm"]);
   });
 });
 
