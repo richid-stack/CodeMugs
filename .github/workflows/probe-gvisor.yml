@@ -28,11 +28,12 @@ jobs:
           cat /etc/docker/daemon.json 2>/dev/null || echo "(no daemon.json)"
           echo "### download"
           ARCH=$(uname -m)
-          URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
+          URL=https://storage.googleapis.com/gvisor/releases/release/20261109.0/${ARCH}
           mkdir dl && cd dl
           wget -q ${URL}/gvisor.tar.zstd ${URL}/gvisor.tar.zstd.sha512
           cat gvisor.tar.zstd.sha512
           sha512sum -c gvisor.tar.zstd.sha512
+          echo '0a0041fd862f4ea3042a9db8d41c742f48a01f909699adc2a0256e46d85e53f97b82b9fd154b3dce636f62b8d557677639f91c77d13f3f875ff9fa535275393c  gvisor.tar.zstd' | sha512sum -c -
           sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
           ls -la /usr/local/bin | grep -i -E "runsc|gvisor|shim"
           /usr/local/bin/runsc --version
@@ -62,29 +63,27 @@ jobs:
             docker inspect --format '{{json .State}}' "$n"
             docker rm -f "$n" >/dev/null
           }
-          for rt in runc runsc; do
-            echo; echo "################ runtime=$rt"
-            echo "--- kernel"; r $rt 64 256m 16 'uname -r; cat /proc/version'
-            echo "--- ids"; r $rt 64 256m 16 'id -u; id -g; pwd; ulimit -n; ulimit -c'
-            echo "--- status"; r $rt 64 256m 16 'grep -E "^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs|Seccomp):" /proc/self/status'
-            echo "--- processes and devices"; r $rt 64 256m 16 'ls /proc | grep -c "^[0-9]"; for d in /dev/mem /dev/kvm /dev/sda /dev/fuse; do test -e $d && echo present:$d; done; true'
-            echo "--- network"; r $rt 64 256m 16 'ls /sys/class/net; echo ---; cat /proc/net/dev; wget -q -T 3 -O /dev/null http://1.1.1.1/ 2>&1; echo status=$?'
-            echo "--- mounts"; r $rt 64 256m 16 'awk '"'"'$5 == "/" || $5 == "/workspace" || $5 == "/scratch" { print $5, $6 }'"'"' /proc/self/mountinfo'
-            echo "--- root write"; r $rt 64 256m 16 'touch /probe 2>&1; echo status=$?'
-            echo "--- source write"; r $rt 64 256m 16 'cat /workspace/hello.txt; { echo x > /workspace/new; } 2>&1; echo status=$?; { echo x >> /workspace/hello.txt; } 2>&1; echo status=$?'
-            echo "--- scratch write and exec"; r $rt 64 256m 16 'echo hi > /scratch/f && cat /scratch/f && cp /bin/true /scratch/t && /scratch/t 2>&1; echo status=$?'
-            echo "--- scratch size"; r $rt 64 256m 8 'dd if=/dev/zero of=/scratch/big bs=1M count=64 2>&1; echo status=$?'
-            echo "--- fork loop (limit 32)"; r $rt 32 256m 16 'i=0; while [ $i -lt 300 ]; do i=$((i+1)); echo started=$i; sleep 20 & done' | tail -n 4
-            echo "--- memory (limit 64m)"; o $rt
-            echo "--- docker socket"; r $rt 64 256m 16 'test -e /var/run/docker.sock; echo $?'
+          for p in 8 16 32 64 128 256 512; do
+            echo "--- runsc pids-limit=$p"; r runsc $p 256m 16 'i=0; while [ $i -lt 600 ]; do i=$((i+1)); echo started=$i; sleep 20 & done' | tail -n 3
           done
-          echo; echo "### gvisor dmesg"
-          docker run --rm --runtime=runsc "$IMG" dmesg 2>&1 | head -n 3
-          echo "### docker kill of a running gVisor container"
-          docker create --name probe-kill --runtime=runsc "${base[@]}" --entrypoint=sleep "$IMG" 120 >/dev/null
-          docker start probe-kill >/dev/null; sleep 2
-          time docker kill probe-kill
-          docker inspect --format '{{json .State}}' probe-kill
-          docker rm -f probe-kill >/dev/null
+          echo "--- runc pids-limit=32 (reference)"; r runc 32 256m 16 'i=0; while [ $i -lt 600 ]; do i=$((i+1)); echo started=$i; sleep 20 & done' | tail -n 2
+          for m in 16 24 32 48 64 128; do
+            echo "--- runsc memory=${m}m, trivial command"; r runsc 64 ${m}m 16 'echo ok' | tail -n 3
+          done
+          for c in 0.01 0.1 1; do
+            echo "--- runsc cpus=$c"
+            timeout 120 docker run --rm --runtime=runsc "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=$c \
+              --tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=16m --workdir=/scratch --entrypoint=sh "$IMG" -c 'echo ok'
+            echo "[exit=$?]"
+          done
+          echo "--- runsc memory-hungry program with limit 128m (does a bigger limit still stop it?)"
+          n=probe-oom2
+          docker create --name "$n" --runtime=runsc "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1 \
+            --tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=16m --workdir=/scratch \
+            --entrypoint=sh "$IMG" -c "x=\$(head -c 400000000 /dev/zero | tr '\\0' a); echo done" >/dev/null
+          timeout 120 docker start -a "$n"; echo "[start exit=$?]"
+          docker inspect --format '{{json .State}}' "$n"; docker rm -f "$n" >/dev/null
+          echo "--- runsc scratch bigger than the memory limit (scratch 64m, memory 64m, write 60m)"
+          r runsc 64 64m 64 'dd if=/dev/zero of=/scratch/big bs=1M count=60 2>&1; echo status=$?'
           EOF
           bash probe.sh 2>&1
