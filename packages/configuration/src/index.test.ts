@@ -1,6 +1,12 @@
 import { format, inspect } from "node:util";
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadApiConfig, loadWorkerConfig, Secret } from "./index.js";
+import {
+  ConfigError,
+  loadApiConfig,
+  loadMigrationConfig,
+  loadWorkerConfig,
+  Secret,
+} from "./index.js";
 
 function captureError(fn: () => unknown): unknown {
   try {
@@ -217,6 +223,73 @@ describe("loadWorkerConfig", () => {
     ]) {
       expect(text).not.toContain("app-password-that-must-stay-hidden");
       expect(text).not.toContain("dispatcher-password-that-must-stay-hidden");
+    }
+  });
+});
+
+describe("loadMigrationConfig", () => {
+  const url =
+    "postgres://codemugs:migration-password-that-must-stay-hidden@db.internal:5432/codemugs";
+
+  function issuesOf(env: Record<string, string | undefined>): readonly string[] {
+    const error = captureError(() => loadMigrationConfig(env));
+    if (!(error instanceof ConfigError)) throw new Error("expected a ConfigError");
+    return error.issues;
+  }
+
+  it("needs the migration connection, in every environment, and applies defaults", () => {
+    for (const nodeEnv of ["development", "test", "production"]) {
+      expect(issuesOf({ NODE_ENV: nodeEnv })).toContain("MIGRATION_DATABASE_URL: is required");
+    }
+    const config = loadMigrationConfig({ MIGRATION_DATABASE_URL: url });
+    expect(config).toMatchObject({ nodeEnv: "development", logLevel: "info", timeoutMs: 600_000 });
+    expect(config.databaseUrl.reveal()).toBe(url);
+  });
+
+  it("does not take the application's connection variable for it", () => {
+    expect(issuesOf({ DATABASE_URL: url })).toContain("MIGRATION_DATABASE_URL: is required");
+  });
+
+  it("treats an empty connection string as missing", () => {
+    expect(issuesOf({ MIGRATION_DATABASE_URL: "" })).toContain(
+      "MIGRATION_DATABASE_URL: is required",
+    );
+  });
+
+  it("bounds the timeout", () => {
+    expect(
+      loadMigrationConfig({ MIGRATION_DATABASE_URL: url, MIGRATION_TIMEOUT_MS: "5000" }),
+    ).toMatchObject({
+      timeoutMs: 5_000,
+    });
+    for (const timeout of ["999", "3600001", "0", "-1", "soon", "1500.5"]) {
+      const issues = issuesOf({ MIGRATION_DATABASE_URL: url, MIGRATION_TIMEOUT_MS: timeout });
+      expect(issues.some((issue) => issue.startsWith("MIGRATION_TIMEOUT_MS:"))).toBe(true);
+    }
+  });
+
+  it("takes only the log levels it knows", () => {
+    expect(loadMigrationConfig({ MIGRATION_DATABASE_URL: url, LOG_LEVEL: "error" }).logLevel).toBe(
+      "error",
+    );
+    const issues = issuesOf({ MIGRATION_DATABASE_URL: url, LOG_LEVEL: "loud" });
+    expect(issues.some((issue) => issue.startsWith("LOG_LEVEL:"))).toBe(true);
+  });
+
+  it("never puts a rejected value or the password in the error, or in a printed configuration", () => {
+    const bad = "mysql://root:root-password-that-must-stay-hidden@db.internal/codemugs";
+    const error = captureError(() => loadMigrationConfig({ MIGRATION_DATABASE_URL: bad }));
+    if (!(error instanceof ConfigError)) throw new Error("expected a ConfigError");
+    expect(error.message).not.toContain("root-password");
+    expect(error.message).not.toContain(bad);
+
+    const config = loadMigrationConfig({ MIGRATION_DATABASE_URL: url });
+    for (const text of [
+      JSON.stringify(config),
+      inspect(config, { depth: 5 }),
+      format("%o", config),
+    ]) {
+      expect(text).not.toContain("migration-password-that-must-stay-hidden");
     }
   });
 });

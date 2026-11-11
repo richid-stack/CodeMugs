@@ -44,7 +44,7 @@ pnpm dev:worker               # runs with reload; reads ../../.env if present
 pnpm --filter @codemugs/worker build && pnpm --filter @codemugs/worker start
 ```
 
-It needs a database that has been migrated (see [`@codemugs/storage`](../../packages/storage/README.md)), and it checks that at startup. There is no command that applies the migrations yet: `runMigrations` is a function, and a deploy step that calls it is still to be written.
+It needs a database that has been migrated, and it checks that at startup. Apply the migrations with [`pnpm db:migrate`](../migrate/README.md) first.
 
 ## Tests
 
@@ -58,7 +58,6 @@ The unit tests need nothing. The database tests need the same setup as `@codemug
 ## Not done
 
 - No container image and no deployment. Hosting is undecided.
-- No command that applies migrations, so a local run needs a database migrated by other means.
 - No health or readiness endpoint, and no heartbeat. An orchestrator can tell the process is gone, not that it is stuck.
 - No metrics, and no alert on dead jobs (release gate 13).
 - No retry of the first connection: a database that is not up yet fails the start, and the orchestrator restarts the process.

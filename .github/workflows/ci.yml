@@ -63,7 +63,7 @@ jobs:
       - name: Test (PostgreSQL 18)
         run: pnpm test
       - name: Database tests (PostgreSQL 17)
-        run: pnpm --filter @codemugs/storage --filter @codemugs/auth --filter @codemugs/ingestion --filter @codemugs/jobs --filter @codemugs/worker --filter @codemugs/api test
+        run: pnpm --filter @codemugs/storage --filter @codemugs/auth --filter @codemugs/ingestion --filter @codemugs/jobs --filter @codemugs/worker --filter @codemugs/migrate --filter @codemugs/api test
         env:
           CODEMUGS_TEST_DATABASE_URL: postgres://postgres:codemugs_dev_only@localhost:5433/postgres
       - run: pnpm smoke

@@ -10,7 +10,7 @@ Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md
 
 - `createPool(options)`: a `pg` pool for the **application role** with a statement timeout and an idle-in-transaction timeout by default.
 - `withTenant(pool, organisationId, work)`: the way application code reaches the database. It runs `work` in a transaction in which `app.organisation_id` is set, so row-level security shows only that organisation's rows. A pool used without it sees no rows, not all rows.
-- `runMigrations(connectionString)`: applies the numbered SQL files in `migrations/`. Run it as the **privileged role**, over a direct connection.
+- `runMigrations(connectionString, directory?, { onApplied? })`: applies the numbered SQL files in `migrations/`. Run it as the **privileged role**, over a direct connection. `onApplied` is called after each migration has committed, so a caller can report progress; an error it throws is ignored. The command that calls it is [`@codemugs/migrate`](../../apps/migrate/README.md).
 - `loadMigrations()`: reads and validates the files without touching a database.
 - `postgresErrorCode(error)`: the SQLSTATE of a database error, so callers map specific failures without matching message text.
 - `@codemugs/storage/testing`: the test harness and schema guard, for **test files only** (a database per test file, the two restricted roles, and a check of every table against the tenancy rules and the dispatcher rules). Other packages with database tests use it.

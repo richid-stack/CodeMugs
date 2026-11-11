@@ -21,6 +21,7 @@
     "clean": "pnpm -r clean",
     "dev:api": "pnpm --filter @codemugs/api dev",
     "dev:worker": "pnpm --filter @codemugs/worker dev",
+    "db:migrate": "pnpm --filter @codemugs/migrate dev",
     "infra:up": "docker compose -f infrastructure/docker/compose.dev.yml up -d --wait",
     "infra:down": "docker compose -f infrastructure/docker/compose.dev.yml down"
   },

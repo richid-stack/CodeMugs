@@ -126,3 +126,31 @@ export type WorkerConfig = z.output<typeof workerEnvSchema>;
 export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   return parseEnv(workerEnvSchema, env);
 }
+
+const migrationEnvSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  // The privileged migration role (ADR 0009): owns the tables and may create them. Never the
+  // application or dispatcher role, and the command refuses those.
+  MIGRATION_DATABASE_URL: requiredPostgresUrl,
+  // The longest the whole run may take, including waiting for another runner's lock. A run that
+  // is cut short rolls back the migration in progress and leaves the rest for the next run.
+  MIGRATION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(600_000),
+});
+
+export type MigrationConfig = ReturnType<typeof parseMigrationConfig>;
+
+function parseMigrationConfig(env: Env) {
+  const parsed = parseEnv(migrationEnvSchema, env);
+  return {
+    nodeEnv: parsed.NODE_ENV,
+    logLevel: parsed.LOG_LEVEL,
+    /** Wrapped so logging the whole configuration cannot reveal it. Call `reveal()` to use it. */
+    databaseUrl: new Secret(parsed.MIGRATION_DATABASE_URL),
+    timeoutMs: parsed.MIGRATION_TIMEOUT_MS,
+  };
+}
+
+export function loadMigrationConfig(env: Env = process.env): MigrationConfig {
+  return parseMigrationConfig(env);
+}

@@ -32,7 +32,7 @@
 ## Not decided, or not done
 
 - **No container image, no deployment, no health or readiness signal, no metrics, no alert on dead jobs** (release gate 13). Hosting is undecided.
-- **No command applies the migrations.** `runMigrations` is a function. A deploy step that calls it is still to be written, and until then a worker needs a database migrated by other means.
+- **The migration command came after this decision.** When the worker was written, `runMigrations` was a function and nothing called it; [ADR 0015](0015-migration-command.md) added the command, `pnpm db:migrate`.
 - **The uncaught exception and unhandled rejection handlers have no test.** They log the error's type and frames and exit with code 1.
 - **Several worker processes at once have not been tested as processes.** Claiming between competing workers is tested in the library ([ADR 0012](0012-jobs-and-cross-tenant-claiming.md)).
 - **A job of a kind no running worker handles stays queued, and nothing reports it.**

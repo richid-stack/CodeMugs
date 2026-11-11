@@ -19,8 +19,9 @@ export const defaultMigrationsDirectory = new URL("../migrations/", import.meta.
 
 const MIGRATION_FILE = /^(?<version>\d{4})_(?<name>[a-z0-9_]+)\.sql$/;
 
-// Serialises concurrent runners (for example two replicas starting together).
-const MIGRATION_LOCK_KEY = 727_227_001;
+// Serialises concurrent runners (for example two replicas starting together). Exported for the
+// tests of the migration command, which hold it to prove the command does not wait for ever.
+export const MIGRATION_LOCK_KEY = 727_227_001;
 
 /**
  * Reads and validates the migration files. Files that are not `.sql` are ignored. Every `.sql`
@@ -81,6 +82,20 @@ function verifyHistory(applied: AppliedRow[], migrations: Migration[]): void {
   });
 }
 
+export interface RunMigrationsOptions {
+  /**
+   * Called after each migration has committed, so a caller can report progress while the run is
+   * going on. An error thrown here is ignored: it must not stop the migrations.
+   */
+  onApplied?: (migration: { version: string; name: string }) => void;
+  /**
+   * Shown as `application_name` in `pg_stat_activity` for the session that runs the migrations,
+   * which is the one that holds the lock, so an operator can tell whose session is running them
+   * or being waited for.
+   */
+  applicationName?: string;
+}
+
 /**
  * Applies pending migrations, each in its own transaction, and returns the versions applied by
  * this call. Run it with the privileged migration role, never with the application role.
@@ -88,10 +103,14 @@ function verifyHistory(applied: AppliedRow[], migrations: Migration[]): void {
 export async function runMigrations(
   connectionString: string,
   directory?: URL | string,
+  options: RunMigrationsOptions = {},
 ): Promise<string[]> {
   const migrations = await loadMigrations(directory);
 
-  const client = new Client({ connectionString });
+  const client = new Client({
+    connectionString,
+    ...(options.applicationName === undefined ? {} : { application_name: options.applicationName }),
+  });
   await client.connect();
   const applied: string[] = [];
   try {
@@ -127,6 +146,11 @@ export async function runMigrations(
         );
       }
       applied.push(migration.version);
+      try {
+        options.onApplied?.({ version: migration.version, name: migration.name });
+      } catch {
+        // An observer must not stop the migrations that are still to run.
+      }
     }
     return applied;
   } finally {
