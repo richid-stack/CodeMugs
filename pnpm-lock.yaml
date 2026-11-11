@@ -73,6 +73,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/auth
 
+  apps/migrate:
+    dependencies:
+      '@codemugs/configuration':
+        specifier: workspace:*
+        version: link:../../packages/configuration
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../../packages/logging
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+
   apps/worker:
     dependencies:
       '@codemugs/configuration':
@@ -84,6 +96,9 @@ importers:
       '@codemugs/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../../packages/logging
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -118,6 +133,8 @@ importers:
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../storage
+
+  packages/logging: {}
 
   packages/storage:
     dependencies:

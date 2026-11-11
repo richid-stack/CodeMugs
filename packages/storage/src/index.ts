@@ -1,6 +1,6 @@
 export { MigrationError, TenantContextError, postgresErrorCode } from "./errors.js";
 export { defaultMigrationsDirectory, loadMigrations, runMigrations } from "./migrate.js";
-export type { Migration } from "./migrate.js";
+export type { Migration, RunMigrationsOptions } from "./migrate.js";
 export type { Pool } from "pg";
 export { createPool } from "./pool.js";
 export { APP_ROLE, DISPATCHER_ROLE } from "./roles.js";

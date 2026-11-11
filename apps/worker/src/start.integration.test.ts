@@ -1,3 +1,4 @@
+import { createLogger } from "@codemugs/logging";
 import { randomUUID } from "node:crypto";
 import { createOrganisation, createProject, issueApiKey } from "@codemugs/auth";
 import { loadWorkerConfig } from "@codemugs/configuration";
@@ -6,7 +7,6 @@ import { enqueueJob, type JobHandler } from "@codemugs/jobs";
 import { createPool, withTenant, type Pool } from "@codemugs/storage";
 import { adminDatabaseUrl, createTestDatabase, type TestDatabase } from "@codemugs/storage/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createLogger } from "./logger.js";
 import { WorkerStartupError } from "./preflight.js";
 import { APPLICATION_NAME, startWorker, type StartOptions, type WorkerHandle } from "./start.js";
 

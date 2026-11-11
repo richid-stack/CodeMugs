@@ -19,6 +19,7 @@
     "@codemugs/configuration": "workspace:*",
     "@codemugs/ingestion": "workspace:*",
     "@codemugs/jobs": "workspace:*",
+    "@codemugs/logging": "workspace:*",
     "@codemugs/storage": "workspace:*"
   },
   "devDependencies": {

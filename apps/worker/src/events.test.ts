@@ -1,7 +1,7 @@
+import { createLogger } from "@codemugs/logging";
 import type { WorkerEvent } from "@codemugs/jobs";
 import { describe, expect, it } from "vitest";
 import { logWorkerEvent } from "./events.js";
-import { createLogger } from "./logger.js";
 
 const job = {
   jobId: "7c1f0a52-1111-4222-8333-944455556666",

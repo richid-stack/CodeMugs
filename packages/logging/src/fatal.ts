@@ -1,4 +1,4 @@
-import { postgresErrorCode } from "@codemugs/storage";
+import { sqlstateOf } from "./sqlstate.js";
 import type { LogFields } from "./logger.js";
 
 /**
@@ -10,7 +10,7 @@ import type { LogFields } from "./logger.js";
  */
 export function describeFatal(error: unknown): LogFields {
   if (!(error instanceof Error)) return { errorType: "NonError" };
-  const code = postgresErrorCode(error);
+  const code = sqlstateOf(error);
   const header = error.message === "" ? error.name : `${error.name}: ${error.message}`;
   const stack = error.stack ?? "";
   const frames = stack.startsWith(header) ? stack.slice(header.length).trim() : "";

@@ -12,10 +12,11 @@ pnpm test         # all tests; or: pnpm --filter <package-name> test
 pnpm format       # apply Prettier
 pnpm dev:api      # run the API with reload
 pnpm dev:worker   # run the job worker with reload (needs a migrated database)
+pnpm db:migrate   # apply the migrations (needs MIGRATION_DATABASE_URL, a migration-role login)
 pnpm infra:up     # Postgres and Redis locally (needs Docker)
 ```
 
-Database tests (`packages/storage`, `packages/auth`, `packages/jobs`, `apps/ingestion`, `apps/worker` and `apps/api`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
+Database tests (`packages/storage`, `packages/auth`, `packages/jobs`, `apps/ingestion`, `apps/worker`, `apps/migrate` and `apps/api`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
 
 ## Layout
 

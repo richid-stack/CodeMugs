@@ -1,5 +1,5 @@
 import type { WorkerEvent } from "@codemugs/jobs";
-import type { Logger } from "./logger.js";
+import type { Logger } from "@codemugs/logging";
 
 /**
  * Writes what a worker reports about itself. Each field is copied by name, so nothing a future

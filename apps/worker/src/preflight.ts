@@ -1,5 +1,5 @@
 import { APP_ROLE, DISPATCHER_ROLE, postgresErrorCode, type Pool } from "@codemugs/storage";
-import { describeFailure } from "./failure.js";
+import { describeFailure } from "@codemugs/logging";
 
 export type StartupCode =
   "database_unreachable" | "wrong_role" | "role_too_powerful" | "schema_not_ready";

@@ -1,4 +1,4 @@
-import { postgresErrorCode } from "@codemugs/storage";
+import { sqlstateOf } from "./sqlstate.js";
 
 /**
  * A short, safe description of why a database operation failed: the SQLSTATE of a database error
@@ -6,7 +6,7 @@ import { postgresErrorCode } from "@codemugs/storage";
  * which can contain the host, the user name or a value the database rejected.
  */
 export function describeFailure(error: unknown): string {
-  const sqlstate = postgresErrorCode(error);
+  const sqlstate = sqlstateOf(error);
   if (sqlstate !== undefined) return `db_${sqlstate}`;
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = error.code;

@@ -53,6 +53,80 @@ describeDatabase("migrations against PostgreSQL", () => {
     throw new Error("expected the migration run to fail");
   }
 
+  describe("reporting progress", () => {
+    it("tells the caller about each migration as soon as it has committed", async () => {
+      const database = await emptyDatabase();
+      const directory = await migrationFiles({
+        "0001_first.sql": "CREATE TABLE one (id int);",
+        "0002_second.sql": "CREATE TABLE two (id int);",
+      });
+      const checks: Array<Promise<{ version: string; name: string; committed: boolean }>> = [];
+      await runMigrations(database.adminUrl, directory, {
+        onApplied: (migration) => {
+          // Asked from another connection at the moment of the call: is it recorded already?
+          checks.push(
+            query<{ version: string }>(
+              database.adminUrl,
+              "SELECT version FROM schema_migrations",
+            ).then((rows) => ({
+              ...migration,
+              committed: rows.some((row) => row.version === migration.version),
+            })),
+          );
+        },
+      });
+      const seen = await Promise.all(checks);
+      expect(seen.map((entry) => [entry.version, entry.name])).toEqual([
+        ["0001", "first"],
+        ["0002", "second"],
+      ]);
+      expect(seen.every((entry) => entry.committed)).toBe(true);
+    });
+
+    it("has told the caller about the earlier migrations when a later one fails", async () => {
+      const database = await emptyDatabase();
+      const directory = await migrationFiles({
+        "0001_first.sql": "CREATE TABLE one (id int);",
+        "0002_broken.sql": "THIS IS NOT SQL;",
+      });
+      const versions: string[] = [];
+      await failureOf(
+        runMigrations(database.adminUrl, directory, {
+          onApplied: (migration) => versions.push(migration.version),
+        }),
+      );
+      expect(versions).toEqual(["0001"]);
+    });
+
+    it("carries on when the observer throws", async () => {
+      const database = await emptyDatabase();
+      const directory = await migrationFiles({
+        "0001_first.sql": "CREATE TABLE one (id int);",
+        "0002_second.sql": "CREATE TABLE two (id int);",
+      });
+      const applied = await runMigrations(database.adminUrl, directory, {
+        onApplied: () => {
+          throw new Error("the observer is broken");
+        },
+      });
+      expect(applied).toEqual(["0001", "0002"]);
+    });
+  });
+
+  it("runs the migrations in a session with the name it was given", async () => {
+    const database = await emptyDatabase();
+    const directory = await migrationFiles({
+      "0001_session.sql":
+        "CREATE TABLE session_name AS SELECT current_setting('application_name') AS name;",
+    });
+    await runMigrations(database.adminUrl, directory, {
+      applicationName: "a-name-for-the-session",
+    });
+    expect(await query(database.adminUrl, "SELECT name FROM session_name")).toEqual([
+      { name: "a-name-for-the-session" },
+    ]);
+  });
+
   it("applies every migration once and records its name and checksum", async () => {
     const database = await emptyDatabase();
     const shipped = await loadMigrations();
