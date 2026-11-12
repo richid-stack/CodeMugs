@@ -103,6 +103,28 @@ describe("the arguments of docker create", () => {
     expect(result.filter((arg) => arg === IMAGE)).toHaveLength(1);
   });
 
+  it("ask for no runtime unless the driver has one, and then for that one, before the image", () => {
+    expect(args().filter((arg) => arg.startsWith("--runtime"))).toEqual([]);
+    const result = dockerCreateArguments(request(), "codemugs-sandbox-test", "runsc");
+    expect(result.filter((arg) => arg.startsWith("--runtime"))).toEqual(["--runtime=runsc"]);
+    expect(result.indexOf("--runtime=runsc")).toBeLessThan(result.indexOf(IMAGE));
+    // Everything else is the same, so that gVisor gets the same restrictions.
+    expect(result.filter((arg) => arg !== "--runtime=runsc")).toEqual(args());
+  });
+
+  it("never take the runtime from the request", () => {
+    const result = dockerCreateArguments(
+      request({ command: ["tool", "--runtime=runc"] }),
+      "codemugs-sandbox-test",
+      "runsc",
+    );
+    expect(result.filter((arg) => arg.startsWith("--runtime"))).toEqual([
+      "--runtime=runsc",
+      "--runtime=runc",
+    ]);
+    expect(result.indexOf("--runtime=runc")).toBeGreaterThan(result.indexOf(IMAGE));
+  });
+
   it("make the program the entrypoint, so that the image's own entrypoint never runs", () => {
     expect(args(request({ command: ["/bin/sh", "-c", "id"] }))).toContain("--entrypoint=/bin/sh");
   });

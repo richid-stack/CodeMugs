@@ -15,4 +15,8 @@ export {
   type SandboxOutcome,
   type SandboxResult,
 } from "./driver.js";
-export { createDockerDriver, type DockerDriverOptions } from "./docker/driver.js";
+export {
+  createDockerDriver,
+  createGvisorDriver,
+  type DockerDriverOptions,
+} from "./docker/driver.js";

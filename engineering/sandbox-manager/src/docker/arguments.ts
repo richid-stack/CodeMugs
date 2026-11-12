@@ -24,8 +24,14 @@ export const SANDBOX_LABEL = "codemugs.sandbox=true";
  * - The program is the entrypoint and the rest of the command follows the image, where an item
  *   that looks like an option is only an argument. The image's own entrypoint never runs.
  * - The image must already be on the host (`--pull=never`): fetching is not something a run does.
+ * - A runtime is asked for by name only when the driver has one (gVisor). It is a fixed name chosen
+ *   by the driver, never a value from the request.
  */
-export function dockerCreateArguments(request: SandboxRunRequest, containerName: string): string[] {
+export function dockerCreateArguments(
+  request: SandboxRunRequest,
+  containerName: string,
+  runtime?: string,
+): string[] {
   const { policy, command, sourceDirectory } = request;
   if ((policy.mounts.source === undefined) !== (sourceDirectory === null)) {
     throw new Error("the request is not consistent: a source mount needs a source directory");
@@ -38,6 +44,7 @@ export function dockerCreateArguments(request: SandboxRunRequest, containerName:
     `--name=${containerName}`,
     `--label=${SANDBOX_LABEL}`,
     "--pull=never",
+    ...(runtime === undefined ? [] : [`--runtime=${runtime}`]),
     "--network=none",
     "--ipc=private",
     "--read-only",
