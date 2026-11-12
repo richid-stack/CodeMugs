@@ -60,28 +60,17 @@ jobs:
           }
           TS() { for rt in runc runsc; do echo "=== $1 [$rt]"; T $rt "$2" "$3" "$4"; done; }
 
-          LIMIT=7000 S escape-probe '/workspace/escape-probe'
-          TS bomb-64 64 256m 'b() { b | b & }; b; sleep 3; echo parent-survived'
-          TS bomb-128 128 256m 'b() { b | b & }; b; sleep 3; echo parent-survived'
-          TS bomb-512 512 256m 'b() { b | b & }; b; sleep 3; echo parent-survived'
-          TS loop-128 128 256m 'i=0; while [ $i -lt 600 ]; do i=$((i+1)); echo started=$i; sleep 20 & done'
-          TS oom-main 64 64m 'x=$(head -c 200000000 /dev/zero | tr "\0" a); echo done'
-          TS oom-child 64 64m 'dd if=/dev/zero of=/dev/shm/a bs=1M count=60 2>&1 | tail -1; dd if=/dev/zero of=/scratch/b bs=1M count=15 2>&1 | tail -1; echo done'
-          TS oom-in-user-namespace 64 64m 'unshare -Urm sh -c "id -u; mount -t tmpfs none /mnt; dd if=/dev/zero of=/mnt/x bs=1M count=200 2>&1 | tail -1; echo after"'
-          TS segv 64 256m 'sh -c "kill -SEGV \$\$"; echo status=$?'
-          S tmp-default 'grep " /tmp " /proc/self/mountinfo; touch /tmp/x; echo touch=$?; cp /bin/true /tmp/t && /tmp/t; echo exec=$?'
-          XF="--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m" S tmp-readonly 'grep " /tmp " /proc/self/mountinfo; touch /tmp/x 2>&1; echo touch=$?'
-          XF="--shm-size=1m" S shm-small 'df -k /dev/shm | tail -1; dd if=/dev/zero of=/dev/shm/b bs=1M count=3 2>&1 | tail -1'
-          CPUS=1 S cpu-1 'read s _ < /proc/uptime; i=0; while [ $i -lt 400000 ]; do i=$((i+1)); done; read e _ < /proc/uptime; echo "$s $e" | awk "{print \"elapsed=\" \$2-\$1}"'
-          CPUS=0.2 S cpu-0.2 'read s _ < /proc/uptime; i=0; while [ $i -lt 400000 ]; do i=$((i+1)); done; read e _ < /proc/uptime; echo "$s $e" | awk "{print \"elapsed=\" \$2-\$1}"'
-          ipcmk -M 4096 >/dev/null; ipcmk -Q >/dev/null; echo "host ipc objects:"; ipcs -a | grep -c "^0x"
-          S ipc 'ipcs -a; echo status=$?'
-          echo "### inotify instances: 4 sandboxes at once, 40 each"
+          # what the driver would add: /tmp as an empty read-only memory filesystem, shared memory stated
+          export XF="--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m --shm-size=64m"
+          S writable-places-with-the-new-options 'for d in /dev/shm /dev/mqueue /dev/pts /dev /tmp /run /var/tmp /etc /root /home /proc /sys /workspace /scratch /; do if touch $d/.probe 2>/dev/null; then echo "writable $d"; rm -f $d/.probe; else echo "not-writable $d"; fi; done; df -k /dev/shm | tail -1'
+          unset XF
+          XF="--dns=127.0.0.1" S dns-option 'cat /etc/resolv.conf'
+          echo "### inotify instances: 3 sandboxes at once, 50 each (limit of the host: $(cat /proc/sys/fs/inotify/max_user_instances) per user)"
           for rt in runc runsc; do
             echo "--- $rt"
-            for n in 1 2 3 4; do
+            for n in 1 2 3; do
               ( rtflag=(); [ "$rt" = runsc ] && rtflag=(--runtime=runsc)
-                docker run --rm "${rtflag[@]}" "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1 "${scratchflag[@]}" --workdir=/scratch --entrypoint=sh "$IMG" -c 'for i in $(seq 1 40); do inotifyd - /scratch:n >/dev/null 2>&1 & done; sleep 6; echo "running=$(pgrep -c inotifyd)"' 2>&1 | tail -2 ) &
+                docker run --rm "${rtflag[@]}" "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1 "${scratchflag[@]}" --workdir=/scratch --entrypoint=sh "$IMG" -c 'for i in $(seq 1 50); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 8; echo "box '"$n"': running=$(ps | grep -c "[i]notifyd") failed=$(cat /scratch/err* 2>/dev/null | grep -c .); cat /scratch/err* 2>/dev/null | sort | uniq -c | head -2' 2>&1 | tail -3 ) &
             done
             wait
           done

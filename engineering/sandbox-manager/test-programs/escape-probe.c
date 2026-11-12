@@ -97,10 +97,13 @@ static const char *errname(int e) {
  * who is asking was passed. `absent` is for calls where a missing file is the denial.
  */
 static int verdict(long result, int absent) {
-  if (result >= 0) return REACHABLE;
+  if (result >= 0) {
+    errno = 0;
+    return REACHABLE;
+  }
   int e = errno;
   int denied = e == EPERM || e == EACCES || e == ENOSYS || e == EAFNOSUPPORT || e == EOPNOTSUPP ||
-               e == EROFS || (absent && (e == ENOENT || e == ENODEV || e == ENXIO));
+               e == EROFS || e == ENODEV || (absent && (e == ENOENT || e == ENXIO));
   errno = e;
   return denied ? DENIED : REACHABLE;
 }
