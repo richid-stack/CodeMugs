@@ -60,20 +60,17 @@ jobs:
           }
           TS() { for rt in runc runsc; do echo "=== $1 [$rt]"; T $rt "$2" "$3" "$4"; done; }
 
-          # what the driver would add: /tmp as an empty read-only memory filesystem, shared memory stated
-          export XF="--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m --shm-size=64m"
-          S writable-places-with-the-new-options 'for d in /dev/shm /dev/mqueue /dev/pts /dev /tmp /run /var/tmp /etc /root /home /proc /sys /workspace /scratch /; do if touch $d/.probe 2>/dev/null; then echo "writable $d"; rm -f $d/.probe; else echo "not-writable $d"; fi; done; df -k /dev/shm | tail -1'
-          unset XF
-          XF="--dns=127.0.0.1" S dns-option 'cat /etc/resolv.conf'
           echo "### inotify instances: 3 sandboxes at once, 50 each (limit of the host: $(cat /proc/sys/fs/inotify/max_user_instances) per user)"
           for rt in runc runsc; do
             echo "--- $rt"
             for n in 1 2 3; do
               ( rtflag=(); [ "$rt" = runsc ] && rtflag=(--runtime=runsc)
-                docker run --rm "${rtflag[@]}" "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1 "${scratchflag[@]}" --workdir=/scratch --entrypoint=sh "$IMG" -c 'for i in $(seq 1 50); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 8; echo "box '"$n"': running=$(ps | grep -c "[i]notifyd") failed=$(cat /scratch/err* 2>/dev/null | grep -c .); cat /scratch/err* 2>/dev/null | sort | uniq -c | head -2' 2>&1 | tail -3 ) &
+                docker run --rm -e BOX=$n "${rtflag[@]}" "${base[@]}" --pids-limit=64 --memory=128m --memory-swap=128m --cpus=1 "${scratchflag[@]}" --workdir=/scratch --entrypoint=sh "$IMG" -c 'for i in $(seq 1 50); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 8; echo "box $BOX: running=$(ps | grep -c "[i]notifyd") failed=$(cat /scratch/err* 2>/dev/null | grep -c .)"; cat /scratch/err* 2>/dev/null | sort | uniq -c | head -2' 2>&1 | tail -3 ) &
             done
             wait
           done
+          echo "--- one box alone, 60 instances, for comparison"
+          docker run --rm -e BOX=solo "${base[@]}" --pids-limit=96 --memory=128m --memory-swap=128m --cpus=1 "${scratchflag[@]}" --workdir=/scratch --entrypoint=sh "$IMG" -c 'for i in $(seq 1 60); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 4; echo "box $BOX: running=$(ps | grep -c "[i]notifyd") failed=$(cat /scratch/err* 2>/dev/null | grep -c .)"' 2>&1 | tail -2
           echo "### end"
           EOF
           REPO=$REPO bash probe.sh 2>&1
