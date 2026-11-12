@@ -627,7 +627,9 @@ describe("the gVisor driver", () => {
   it("is available when the daemon answers and has the runsc runtime, and asks nothing else", async () => {
     const t = await setup({ info: RUNSC });
     expect(await gvisor(t).availability()).toEqual({ available: true });
-    expect(verbs(await t.calls())).toEqual(["version", "info"]);
+    const calls = await t.calls();
+    expect(verbs(calls)).toEqual(["version", "info"]);
+    expect(calls[1]?.args).toEqual(["info", "--format", "{{json .Runtimes}}"]);
   });
 
   it("does not ask about runtimes when the daemon does not answer", async () => {
@@ -660,6 +662,7 @@ describe("the gVisor driver", () => {
     ["a path that only ends like it", JSON.stringify({ runsc: { path: "/usr/bin/not-runsc" } })],
     ["no path", JSON.stringify({ runsc: {} })],
     ["a path that is not text", JSON.stringify({ runsc: { path: 7 } })],
+    ["a path that is a list", JSON.stringify({ runsc: { path: ["runsc"] } })],
   ])("is not available when the runtime called runsc points to %s", async (_what, info) => {
     const t = await setup({ info });
     expect(await gvisor(t).availability()).toEqual({
