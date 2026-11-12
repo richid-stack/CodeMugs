@@ -47,11 +47,11 @@ Public means anyone can read the code and the documents, including the architect
 ## Actions (Settings, Actions)
 
 - [ ] Default workflow token permissions: **read-only**. The workflows request what they need.
-- [ ] Limit actions to those you trust. Renovate pins third-party actions by digest.
+- [ ] Limit actions to those you trust. Every action in the workflows is already pinned to a commit and a test fails if one is not ([ADR 0019](../architecture/decisions/0019-pin-github-actions.md)). The allow-list is the owner's to set.
 
 ## Dependency updates
 
-- [ ] Install the Renovate GitHub app on this repository. `renovate.json` is already configured.
+- [ ] Install the Renovate GitHub app on this repository. `renovate.json` is already configured, and until the app is installed nothing proposes updates: not for dependencies, and not for the pinned actions, which then have to be renewed by hand ([ADR 0019](../architecture/decisions/0019-pin-github-actions.md)).
 
 ## Secrets
 

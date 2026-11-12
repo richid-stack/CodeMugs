@@ -24,7 +24,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:
 
 ## Dependencies
 
-- Versions are pinned exactly and `pnpm-lock.yaml` is committed. Renovate proposes updates.
+- Versions are pinned exactly and `pnpm-lock.yaml` is committed. Renovate is configured to propose updates once its GitHub app is installed.
 - Packages that want to run install scripts are denied by default. Review before allowing one in `pnpm-workspace.yaml`.
 - Justify new dependencies in the pull request.
 
