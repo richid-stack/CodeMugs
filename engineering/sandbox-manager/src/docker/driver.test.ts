@@ -2,11 +2,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SandboxError } from "../driver.js";
+import { isolationAtLeast, SandboxError } from "../driver.js";
 import { validPolicyInput, type PolicyInput } from "../fixtures.js";
 import { SandboxRequestError } from "../policy.js";
 import { validateRunRequest, type SandboxRunRequest } from "../request.js";
-import { createDockerDriver, type DockerDriverOptions } from "./driver.js";
+import { createDockerDriver, createGvisorDriver, type DockerDriverOptions } from "./driver.js";
 
 /**
  * A stand-in for the docker command, so that what the driver does with processes (waiting, killing,
@@ -31,6 +31,7 @@ const out = (fd, text) => {
   }
 };
 if (verb === "version") process.exit(cfg.version ?? 0);
+else if (verb === "info") { out(1, cfg.info ?? "{}"); process.exit(cfg.infoExit ?? 0); }
 else if (verb === "create") process.exit(cfg.create ?? 0);
 else if (verb === "kill") {
   if (!cfg.killIgnored) fs.writeFileSync(killed, "");
@@ -41,7 +42,7 @@ else if (verb === "kill") {
 }
 else if (verb === "rm") process.exit(cfg.rm ?? 0);
 else if (verb === "inspect") {
-  out(1, cfg.inspect ?? JSON.stringify({ Running: false, OOMKilled: false, ExitCode: cfg.exitCode ?? 0 }));
+  out(1, cfg.inspect ?? JSON.stringify({ Running: false, OOMKilled: false, ExitCode: cfg.exitCode ?? 0, Error: cfg.stateError ?? "" }));
   process.exit(cfg.inspectExit ?? 0);
 } else if (verb === "start") {
   if (cfg.stdout) out(1, cfg.stdout.replace("{name}", name));
@@ -62,6 +63,9 @@ interface Scenario {
   killDelayMs?: number;
   rm?: number;
   inspect?: string;
+  stateError?: string;
+  info?: string;
+  infoExit?: number;
   inspectExit?: number;
   exitCode?: number;
   stdout?: string;
@@ -565,5 +569,144 @@ describe("the environment of the docker command", () => {
     expect(env).toContain("DOCKER_HOST");
     expect(env).not.toContain("HOME");
     expect(env).not.toContain("CODEMUGS_MARKER_SECRET");
+  });
+});
+
+describe("a container that could not be started", () => {
+  it("is reported as not started, without anything docker or the program said", async () => {
+    const t = await setup({
+      exitCode: 127,
+      stateError: "failed to create task: exec /host/secret/path/tool: no such file",
+      stderr: "docker: Error response from daemon: /host/secret/path/tool",
+      stdout: "partial output",
+    });
+    const error = await t.driver.run(t.request()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SandboxError);
+    expect(error).toMatchObject({
+      code: "start_failed",
+      message: "the sandbox could not be started",
+    });
+    expect(JSON.stringify(error)).not.toContain("secret");
+    expect(verbs(await t.calls())).toEqual(["create", "start", "inspect", "rm"]);
+  });
+
+  it("is still reported as stopped for a limit of ours, when that came first", async () => {
+    const t = await setup({ floodStdout: 200_000, stateError: "some start error" });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+    expect(result.outcome).toBe("output_limit_exceeded");
+  });
+
+  it("is not assumed when docker leaves the reason out or gives it as something else", async () => {
+    const t = await setup({
+      inspect: JSON.stringify({ Running: false, OOMKilled: false, ExitCode: 3, Error: 5 }),
+    });
+    expect(await t.driver.run(t.request())).toMatchObject({ outcome: "exited", exitCode: 3 });
+  });
+});
+
+describe("the gVisor driver", () => {
+  const RUNSC = JSON.stringify({
+    "io.containerd.runc.v2": { path: "runc" },
+    runsc: { path: "/usr/local/bin/runsc" },
+  });
+  const gvisor = (t: Awaited<ReturnType<typeof setup>>) =>
+    createGvisorDriver({
+      workspaceRoot: t.work,
+      dockerCommand: join(t.base, "bin", "docker"),
+      stopGraceMs: 300,
+    });
+
+  it("is called gvisor, and is stronger than a hardened container and weaker than a microvm", async () => {
+    const driver = gvisor(await setup());
+    expect(driver.name).toBe("gvisor");
+    expect(driver.isolation).toBe("gvisor");
+    expect(isolationAtLeast(driver.isolation, "hardened-container")).toBe(true);
+    expect(isolationAtLeast(driver.isolation, "microvm")).toBe(false);
+  });
+
+  it("is available when the daemon answers and has the runsc runtime, and asks nothing else", async () => {
+    const t = await setup({ info: RUNSC });
+    expect(await gvisor(t).availability()).toEqual({ available: true });
+    expect(verbs(await t.calls())).toEqual(["version", "info"]);
+  });
+
+  it("does not ask about runtimes when the daemon does not answer", async () => {
+    const t = await setup({ version: 1, info: RUNSC });
+    expect(await gvisor(t).availability()).toEqual({
+      available: false,
+      reason: "the docker daemon did not answer",
+    });
+    expect(verbs(await t.calls())).toEqual(["version"]);
+  });
+
+  it.each([
+    ["has no runsc runtime", JSON.stringify({ "io.containerd.runc.v2": { path: "runc" } })],
+    ["says nothing", "{}"],
+    ["gives null", "null"],
+    ["gives a list", "[]"],
+    ["gives text", JSON.stringify("runsc")],
+    ["gives runsc as text", JSON.stringify({ runsc: "/usr/local/bin/runsc" })],
+    ["gives runsc as nothing", JSON.stringify({ runsc: null })],
+  ])("is not available when the daemon %s", async (_what, info) => {
+    const t = await setup({ info });
+    expect(await gvisor(t).availability()).toEqual({
+      available: false,
+      reason: "the runsc runtime is not registered with docker",
+    });
+  });
+
+  it.each([
+    ["runc", JSON.stringify({ runsc: { path: "/usr/bin/runc" } })],
+    ["a path that only ends like it", JSON.stringify({ runsc: { path: "/usr/bin/not-runsc" } })],
+    ["no path", JSON.stringify({ runsc: {} })],
+    ["a path that is not text", JSON.stringify({ runsc: { path: 7 } })],
+  ])("is not available when the runtime called runsc points to %s", async (_what, info) => {
+    const t = await setup({ info });
+    expect(await gvisor(t).availability()).toEqual({
+      available: false,
+      reason: "the runtime called runsc does not point to runsc",
+    });
+  });
+
+  it("is not available when the daemon cannot say which runtimes it has", async () => {
+    for (const scenario of [{ infoExit: 1 }, { info: "not json at all" }]) {
+      const t = await setup(scenario);
+      expect(await gvisor(t).availability()).toEqual({
+        available: false,
+        reason: "the docker daemon did not say which runtimes it has",
+      });
+    }
+  });
+
+  it("creates its containers with the runsc runtime, and the docker driver does not", async () => {
+    const t = await setup({ stdout: "ok" });
+    const result = await gvisor(t).run(t.request());
+    expect(result).toMatchObject({ outcome: "exited", exitCode: 0, stdout: "ok" });
+    const create = (await t.calls()).find((call) => call.args[0] === "create");
+    expect(create?.args.filter((arg) => arg.startsWith("--runtime"))).toEqual(["--runtime=runsc"]);
+
+    const plain = await setup({ stdout: "ok" });
+    await plain.driver.run(plain.request());
+    const plainCreate = (await plain.calls()).find((call) => call.args[0] === "create");
+    expect(plainCreate?.args.some((arg) => arg.startsWith("--runtime"))).toBe(false);
+  });
+
+  it("makes the same calls in the same order, and refuses what the docker driver refuses", async () => {
+    const t = await setup({ stdout: "ok" });
+    await gvisor(t).run(t.request());
+    expect(verbs(await t.calls())).toEqual(["create", "start", "inspect", "rm"]);
+    await expect(gvisor(t).run({} as SandboxRunRequest)).rejects.toThrow();
+  });
+
+  it("reports a failed create as unavailable when the runsc runtime is not there", async () => {
+    const t = await setup({ create: 125, info: "{}" });
+    await expect(gvisor(t).run(t.request())).rejects.toMatchObject({ code: "unavailable" });
+    expect(verbs(await t.calls())).toEqual(["create", "version", "info"]);
+  });
+
+  it("reports a failed create as a start failure when the runtime is there", async () => {
+    const t = await setup({ create: 125, info: RUNSC });
+    await expect(gvisor(t).run(t.request())).rejects.toMatchObject({ code: "start_failed" });
+    expect(verbs(await t.calls())).toEqual(["create", "version", "info"]);
   });
 });

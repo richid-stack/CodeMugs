@@ -52,6 +52,8 @@ jobs:
       # image is alpine 3.22 as the registry returned it on 2026-11-11, pinned by digest; docker
       # checks the digest when it pulls (ADR 0017).
       REQUIRE_DOCKER_TESTS: "true"
+      # And for gVisor: the runsc runtime must be registered with the daemon (ADR 0018).
+      REQUIRE_GVISOR_TESTS: "true"
       CODEMUGS_TEST_SANDBOX_IMAGE: docker.io/library/alpine@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +65,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Pull the sandbox test image
         run: docker pull "$CODEMUGS_TEST_SANDBOX_IMAGE"
+      - name: Install gVisor
+        # gVisor release 20261109.0 for x86_64, pinned by the checksum of its archive. Both were
+        # read from Google's release bucket on 2026-11-11 and are trusted on first use. To update:
+        # read the new release's gvisor.tar.zstd.sha512, run the sandbox tests, and change both
+        # values in one reviewed commit (ADR 0018).
+        env:
+          GVISOR_RELEASE: "20261109.0"
+          GVISOR_SHA512: "0a0041fd862f4ea3042a9db8d41c742f48a01f909699adc2a0256e46d85e53f97b82b9fd154b3dce636f62b8d557677639f91c77d13f3f875ff9fa535275393c"
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          wget -q "https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/x86_64/gvisor.tar.zstd"
+          echo "${GVISOR_SHA512}  gvisor.tar.zstd" | sha512sum -c -
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          /usr/local/bin/runsc --version
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint

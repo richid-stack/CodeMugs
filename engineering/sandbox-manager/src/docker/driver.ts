@@ -6,6 +6,7 @@ import { isInside } from "../paths.js";
 import {
   SandboxError,
   type Availability,
+  type IsolationLevel,
   type SandboxDriver,
   type SandboxOutcome,
   type SandboxResult,
@@ -55,6 +56,18 @@ interface Finished {
   readonly notStarted: boolean;
 }
 
+/** What differs between the drivers that run containers through the docker command. */
+interface Variant {
+  readonly name: string;
+  readonly isolation: IsolationLevel;
+  /** The docker runtime to ask for by name, or nothing for the daemon's default. */
+  readonly runtime: string | undefined;
+  /** What is checked, besides the daemon answering, before the driver says it is available. */
+  readonly checkRuntime: ((control: Control) => Promise<Availability>) | undefined;
+}
+
+type Control = (args: readonly string[], timeoutMs: number) => Promise<Finished>;
+
 /** Keeps at most `limit` bytes and notes that there was more. */
 class Capture {
   readonly #chunks: Buffer[] = [];
@@ -84,6 +97,63 @@ class Capture {
  * third-party code (ADR 0007 decision 5, ADR 0017).
  */
 export function createDockerDriver(options: DockerDriverOptions): SandboxDriver {
+  return createContainerDriver(options, {
+    name: "docker",
+    isolation: "hardened-container",
+    runtime: undefined,
+    checkRuntime: undefined,
+  });
+}
+
+/** The name `runsc install` gives the gVisor runtime in the docker daemon's configuration. */
+const GVISOR_RUNTIME = "runsc";
+
+/**
+ * The same hardened container, run by gVisor (`runsc`) instead of the host's kernel: the program's
+ * system calls are answered by gVisor's own kernel in user space and not by the host's (ADR 0018).
+ * It needs the `runsc` runtime registered with the docker daemon, and refuses to run otherwise: a
+ * missing runtime is an error, never a fall back to the daemon's default.
+ */
+export function createGvisorDriver(options: DockerDriverOptions): SandboxDriver {
+  return createContainerDriver(options, {
+    name: "gvisor",
+    isolation: "gvisor",
+    runtime: GVISOR_RUNTIME,
+    checkRuntime: checkGvisorRuntime,
+  });
+}
+
+/**
+ * Asks the daemon which runtimes it has. A runtime called `runsc` that points somewhere else would
+ * make this driver claim an isolation it does not give, so its path has to end in `runsc`. This
+ * catches a mistake in the configuration. It is not a defence against a daemon that lies.
+ */
+async function checkGvisorRuntime(control: Control): Promise<Availability> {
+  const info = await control(["info", "--format", "{{json .Runtimes}}"], AVAILABILITY_TIMEOUT_MS);
+  if (info.code !== 0) {
+    return { available: false, reason: "the docker daemon did not say which runtimes it has" };
+  }
+  let runtimes: unknown;
+  try {
+    runtimes = JSON.parse(info.stdout);
+  } catch {
+    return { available: false, reason: "the docker daemon did not say which runtimes it has" };
+  }
+  const entry =
+    typeof runtimes === "object" && runtimes !== null
+      ? (runtimes as Record<string, unknown>)[GVISOR_RUNTIME]
+      : undefined;
+  if (typeof entry !== "object" || entry === null) {
+    return { available: false, reason: "the runsc runtime is not registered with docker" };
+  }
+  const path = (entry as Record<string, unknown>)["path"];
+  if (typeof path !== "string" || path.split("/").at(-1) !== GVISOR_RUNTIME) {
+    return { available: false, reason: "the runtime called runsc does not point to runsc" };
+  }
+  return { available: true };
+}
+
+function createContainerDriver(options: DockerDriverOptions, variant: Variant): SandboxDriver {
   const command = options.dockerCommand ?? "docker";
   const graceMs = options.stopGraceMs ?? 15_000;
   const environment: Record<string, string> =
@@ -97,7 +167,7 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
       : { ...options.environment };
 
   /** Runs a docker command to the end, keeping a bounded amount of what it prints. */
-  function control(args: readonly string[], timeoutMs: number): Promise<Finished> {
+  const control: Control = (args, timeoutMs) => {
     return new Promise((resolve) => {
       const child = spawn(command, args, { env: environment, stdio: ["ignore", "pipe", "ignore"] });
       const out = new Capture(CONTROL_OUTPUT_LIMIT);
@@ -116,7 +186,7 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
       child.on("error", () => done({ code: null, stdout: "", notStarted: true }));
       child.on("close", (code) => done({ code, stdout: out.text(), notStarted: false }));
     });
-  }
+  };
 
   async function availability(): Promise<Availability> {
     const result = await control(
@@ -125,7 +195,7 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
     );
     if (result.notStarted) return { available: false, reason: "the docker command was not found" };
     if (result.code !== 0) return { available: false, reason: "the docker daemon did not answer" };
-    return { available: true };
+    return variant.checkRuntime === undefined ? { available: true } : variant.checkRuntime(control);
   }
 
   /**
@@ -197,6 +267,11 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
     );
     const state = inspected.code === 0 ? parseState(inspected.stdout) : undefined;
     if (state === undefined || state.running) throw new SandboxError("run_failed");
+    // Docker keeps the reason a container could not be started (a program that is not there, a
+    // runtime that could not make its sandbox). The client prints it among what the program
+    // printed, so it is not kept: the run is reported as not started, and what was captured is
+    // dropped with it. A limit of ours that stopped the run comes first.
+    if (reason === null && state.error !== "") throw new SandboxError("start_failed");
 
     let outcome: SandboxOutcome;
     let exitCode: number | null;
@@ -222,8 +297,8 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
   }
 
   return {
-    name: "docker",
-    isolation: "hardened-container",
+    name: variant.name,
+    isolation: variant.isolation,
     availability,
 
     async run(input: SandboxRunRequest): Promise<SandboxResult> {
@@ -231,7 +306,10 @@ export function createDockerDriver(options: DockerDriverOptions): SandboxDriver 
       const request = await resolveSource(input);
       const name = `codemugs-sandbox-${randomUUID()}`;
 
-      const created = await control(dockerCreateArguments(request, name), CONTROL_TIMEOUT_MS);
+      const created = await control(
+        dockerCreateArguments(request, name, variant.runtime),
+        CONTROL_TIMEOUT_MS,
+      );
       if (created.code !== 0) {
         throw new SandboxError((await availability()).available ? "start_failed" : "unavailable");
       }
@@ -258,13 +336,15 @@ interface ContainerState {
   readonly running: boolean;
   readonly oomKilled: boolean;
   readonly exitCode: number;
+  /** What docker recorded as the reason the container could not be started, or an empty string. */
+  readonly error: string;
 }
 
 /** Reads the fields we need from `docker inspect --format {{json .State}}`, or nothing. */
 function parseState(text: string): ContainerState | undefined {
   try {
     const state = JSON.parse(text) as Record<string, unknown>;
-    const { Running: running, OOMKilled: oomKilled, ExitCode: exitCode } = state;
+    const { Running: running, OOMKilled: oomKilled, ExitCode: exitCode, Error: error } = state;
     if (
       typeof running !== "boolean" ||
       typeof oomKilled !== "boolean" ||
@@ -273,7 +353,7 @@ function parseState(text: string): ContainerState | undefined {
     ) {
       return undefined;
     }
-    return { running, oomKilled, exitCode };
+    return { running, oomKilled, exitCode, error: typeof error === "string" ? error : "" };
   } catch {
     return undefined;
   }
