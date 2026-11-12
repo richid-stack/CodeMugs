@@ -2,7 +2,7 @@
 
 Isolated execution environments for customer code and for anything built from it. Customer code never runs outside this module, including repository analysis ([ADR 0007](../../docs/architecture/decisions/0007-build-the-sandbox-early.md)).
 
-**Status:** Phase 1 · Foundation (started). What exists is the **policy model**, the **driver interface** and **one driver: a hardened container run by the `docker` command**. It is the weakest isolation level, because the container shares the host's kernel, so it is **not enough for hostile third-party code** ([ADR 0007](../../docs/architecture/decisions/0007-build-the-sandbox-early.md) decision 5). Nothing in this repository may claim that code execution is isolated: release gate 8 (escape and resource-abuse tests, and a stronger driver) is not started. Nothing calls the driver yet. Next: a gVisor driver and the first escape tests ([roadmap](../../docs/engineering/roadmap.md), step 5). Decisions: [ADR 0016](../../docs/architecture/decisions/0016-sandbox-policy-and-driver-interface.md) (policy and interface), [ADR 0017](../../docs/architecture/decisions/0017-hardened-container-driver.md) (the driver).
+**Status:** Phase 1 · Foundation (started). What exists is the **policy model**, the **driver interface** and **two drivers, both run by the `docker` command: a hardened container, and the same container under gVisor**. The hardened container is the weakest level, because it shares the host's kernel, and is **not enough for hostile third-party code** ([ADR 0007](../../docs/architecture/decisions/0007-build-the-sandbox-early.md) decision 5). Whether gVisor is enough has not been tested: no escape test exists. Nothing in this repository may claim that code execution is isolated, and release gate 8 (escape and resource-abuse tests) is not started. Nothing calls a driver yet. Next: escape-primitive and resource-abuse tests that run in CI on both drivers ([roadmap](../../docs/engineering/roadmap.md), step 5). Decisions: [ADR 0016](../../docs/architecture/decisions/0016-sandbox-policy-and-driver-interface.md) (policy and interface), [ADR 0017](../../docs/architecture/decisions/0017-hardened-container-driver.md) (the hardened container), [ADR 0018](../../docs/architecture/decisions/0018-gvisor-driver.md) (gVisor).
 
 ## What it provides
 
@@ -68,6 +68,18 @@ It drives the `docker` command (no library, no shell: every argument is a separa
 - the command as an argument list: the first item is the entrypoint, so the image's own entrypoint never runs, and no item can become an option of docker;
 - no environment variables from this process, and no image pulling: the image has to be on the host already.
 
+### gVisor
+
+```ts
+import { createGvisorDriver } from "@codemugs/sandbox-manager";
+
+const driver = createGvisorDriver({ workspaceRoot: "/var/lib/codemugs/work" });
+```
+
+The same driver with one more option, `--runtime=runsc`: everything above applies unchanged, and the program's system calls are answered by gVisor's kernel in user space instead of the host's. Its isolation level is `gvisor`. It needs a runtime called `runsc` registered with the Docker daemon (`runsc install`), and is _unavailable_ without one: it never falls back to the default runtime. Things that differ from the hardened container, as observed (ADR 0018 has the table): the program sees another kernel (`4.19.0-gvisor`), `Seccomp` reads 0 inside, a refused write says "Permission denied", and **the process limit counts gVisor's own tasks**, so a limit that is fine for the hardened container can be too small for gVisor to start (such a run is `start_failed`). The policy engine, once there, has to choose limits per driver.
+
+A container that could not be started (a program that is not in the image, a sandbox that could not be made) is `start_failed` for both drivers, read from docker's own record of the reason, and nothing docker printed is kept.
+
 The result says how the run ended (`exited`, `timed_out`, `output_limit_exceeded` or `out_of_memory`). The wall-clock limit and the output limit are enforced by this process, which kills the container; when both apply the first one found is reported. A failure is a `SandboxError` with a fixed sentence (`unavailable`, `source_not_allowed`, `start_failed`, `run_failed` or `cleanup_failed`), never anything docker or the program said. A container that cannot be removed outranks every other result.
 
 ## Tests
@@ -77,13 +89,13 @@ pnpm --filter @codemugs/sandbox-manager test
 ```
 
 - **Without Docker** (what runs locally): the policy and request rules from both sides (accepted at the edge, refused just past it), the frozen copies, the brand on a checked request, what a refusal says, the exact arguments of `docker create` (with hostile values in every position), and the driver's logic against a stand-in `docker` command: the order of the calls, limits, outcomes, cleanup and what is reported.
-- **Against a real Docker daemon** (`src/docker/docker.integration.test.ts`): what the hardening does in practice. It needs `CODEMUGS_TEST_SANDBOX_IMAGE`, an image pinned by digest that is already on the host, and a daemon, and is skipped when either is missing. CI sets both and sets `REQUIRE_DOCKER_TESTS=true`, which turns a missing daemon or image into a failure. To run it locally: `docker pull <image>`, then set `CODEMUGS_TEST_SANDBOX_IMAGE` to the same reference. The image CI uses is in `.github/workflows/ci.yml`.
+- **Against a real Docker daemon** (`src/docker/docker.integration.test.ts`): what the hardening does in practice, for each driver (the same 24 tests, with the differences between the drivers written down in one table, plus one that only gVisor has). It needs `CODEMUGS_TEST_SANDBOX_IMAGE`, an image pinned by digest that is already on the host, and a daemon, and the gVisor half also needs the `runsc` runtime. Each half is skipped when what it needs is missing. CI provides everything and sets `REQUIRE_DOCKER_TESTS=true` and `REQUIRE_GVISOR_TESTS=true`, which turn a missing daemon, image or runtime into a failure. To run it locally: `docker pull <image>`, then set `CODEMUGS_TEST_SANDBOX_IMAGE` to the same reference (and install gVisor and run `runsc install` for the second half). The image and the gVisor release CI uses are pinned in `.github/workflows/ci.yml`.
 
 ## Not done
 
-- **One driver, and the weakest level.** gVisor and then a microVM are not written. The container shares the host's kernel and the Docker daemon runs as root, so the host that runs this driver is part of the trust boundary ([ADR 0017](../../docs/architecture/decisions/0017-hardened-container-driver.md)).
-- **No test suite that every driver has to pass.** The real-Docker tests are specific to this driver. They become the shared suite when the second driver exists.
-- **No escape tests** (release gate 8). The real-Docker tests show that the hardening takes effect (user, capabilities, no network, read-only filesystems, limits, cleanup). They are not attempts to break out.
+- **No microVM driver, and the hardened container is the weakest level.** It shares the host's kernel, and the Docker daemon runs as root, so the host that runs these drivers is part of the trust boundary ([ADR 0017](../../docs/architecture/decisions/0017-hardened-container-driver.md)). gVisor is not a virtual machine either, and it is only run in CI so far ([ADR 0018](../../docs/architecture/decisions/0018-gvisor-driver.md)).
+- **No escape tests** (release gate 8). The real-runtime tests show that the hardening takes effect (user, capabilities, no network, read-only filesystems, limits, cleanup) and that the gVisor driver runs under a kernel that is not the host's. They are not attempts to break out.
+- **gVisor's performance, compatibility and platform are not measured or recorded** (ADR 0018).
 - **No reaper.** If the process dies between `create` and `rm`, a container is left. It carries the label `codemugs.sandbox=true`, and nothing removes it.
 - **No network allow-list, no credentials**, and so no way yet for an agent runtime to reach a model API from inside a sandbox. They come with the enforcement.
 - **Nothing produces policies.** The policy engine does not exist yet, so invariant 4 (a policy is produced by the policy engine and never by an agent) is a rule of the design, not something enforced in code. The ceilings are the second line.

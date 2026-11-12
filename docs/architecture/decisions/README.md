@@ -19,5 +19,6 @@
 | [0015](0015-migration-command.md)                           | The migration command: wrong login refused, failures by code  | Accepted |
 | [0016](0016-sandbox-policy-and-driver-interface.md)         | The sandbox policy and driver interface: nothing implied      | Accepted |
 | [0017](0017-hardened-container-driver.md)                   | The hardened container driver: every option written out       | Accepted |
+| [0018](0018-gvisor-driver.md)                               | The gVisor driver: the same container under another kernel    | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
