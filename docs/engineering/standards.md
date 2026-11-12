@@ -9,8 +9,9 @@ These describe what is already enforced by tooling, followed by conventions we h
 - **Type-aware ESLint**, including rules against floating and misused promises.
 - **Prettier** for formatting.
 - **Vitest** for tests, colocated as `*.test.ts` next to the code.
-- **Exact dependency versions** (`save-exact`) with a committed lockfile and `--frozen-lockfile` in CI. Renovate proposes updates.
-- **`pnpm verify`** runs build, typecheck, lint, format check and tests. CI runs the same steps.
+- **Exact dependency versions** (`save-exact`) with a committed lockfile and `--frozen-lockfile` in CI. Renovate is configured to propose updates once its GitHub app is installed.
+- **GitHub Actions pinned to a commit.** Every `uses:` in a workflow names a full commit SHA (a container image, a digest), with the release in a comment. `pnpm check:workflows` fails otherwise ([ADR 0019](../architecture/decisions/0019-pin-github-actions.md)).
+- **`pnpm verify`** runs build, typecheck, lint, format check, the workflow pin check, tests and the smoke test. CI runs the same steps.
 
 Workspace packages are consumed from their built `dist/`, so run `pnpm build` after changing a package that others depend on.
 
