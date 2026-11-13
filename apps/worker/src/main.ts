@@ -1,7 +1,7 @@
 import { ConfigError, loadWorkerConfig } from "@codemugs/configuration";
 import { createLogger, describeFatal } from "@codemugs/logging";
 import { WorkerStartupError } from "./preflight.js";
-import { startWorker } from "./start.js";
+import { startWorker, type WorkerHandle } from "./start.js";
 
 async function main(): Promise<void> {
   let config;
@@ -19,21 +19,16 @@ async function main(): Promise<void> {
 
   const logger = createLogger(config.logLevel);
 
-  let worker;
-  try {
-    worker = await startWorker({ config, logger });
-  } catch (error) {
-    if (error instanceof WorkerStartupError) {
-      // Safe to print: it names the variable and what is wrong, and nothing the database said.
-      logger.fatal(error.message, { code: error.code, variable: error.variable });
-      process.exitCode = 1;
-      return;
-    }
-    throw error;
-  }
+  logger.info("worker starting");
 
+  // Signals are handled from here on, while the worker is still connecting. Until it is running
+  // there is nothing to stop, so a signal is remembered and acted on as soon as it is. Left to the
+  // default action it would end the program in the middle of connecting, and a program that is
+  // told to stop must end by saying that it did.
+  let running: WorkerHandle | undefined;
+  let requested: NodeJS.Signals | undefined;
   let shuttingDown = false;
-  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
+  const shutdown = async (signal: NodeJS.Signals, handle: WorkerHandle): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("shutdown requested", { signal });
@@ -47,7 +42,7 @@ async function main(): Promise<void> {
     forceExit.unref();
 
     try {
-      await worker.stop();
+      await handle.stop();
       logger.info("shutdown complete");
     } catch (error) {
       logger.error("error during shutdown", describeFatal(error));
@@ -58,9 +53,26 @@ async function main(): Promise<void> {
   // `once` so a second Ctrl-C during a slow drain falls through to the default (terminate).
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
-      void shutdown(signal);
+      if (running === undefined) requested = signal;
+      else void shutdown(signal, running);
     });
   }
+
+  let worker: WorkerHandle;
+  try {
+    worker = await startWorker({ config, logger });
+    running = worker;
+  } catch (error) {
+    if (error instanceof WorkerStartupError) {
+      // Safe to print: it names the variable and what is wrong, and nothing the database said.
+      logger.fatal(error.message, { code: error.code, variable: error.variable });
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
+
+  if (requested !== undefined) void shutdown(requested, worker);
 
   // A process in an unknown state should die and be restarted by the orchestrator.
   process.on("uncaughtException", (error) => {

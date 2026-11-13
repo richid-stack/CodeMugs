@@ -222,6 +222,24 @@ describeDatabase("the program with a database", () => {
     expect(result.code).toBe(0);
   });
 
+  it("stops cleanly when told to while it is still starting", async () => {
+    // The signal is sent the moment the program says it is starting, so that it arrives while the
+    // worker is still connecting. It used to end the program by the default action then, because
+    // the handlers were put in only after the worker had started.
+    const program = launch(environment());
+    program.child.stdout?.on("data", function onData(chunk: Buffer) {
+      if (!chunk.toString().includes("worker starting")) return;
+      program.child.stdout?.off("data", onData);
+      program.child.kill("SIGTERM");
+    });
+    const result = await program.finished;
+    expect(result.signal).toBeNull();
+    expect(result.code).toBe(0);
+    const messages = logLines(result.stdout).map((line) => line["msg"]);
+    expect(messages).toContain("shutdown requested");
+    expect(messages).toContain("shutdown complete");
+  });
+
   it("does not start with the two connections the wrong way round", async () => {
     const result = await launch(
       environment({
