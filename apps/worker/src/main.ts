@@ -19,26 +19,15 @@ async function main(): Promise<void> {
 
   const logger = createLogger(config.logLevel);
 
-  // Signals are handled from here on, while the worker is still connecting. Until it is running
-  // there is nothing to stop, so a signal is remembered and acted on as soon as it is. Left to the
-  // default action it would end the program in the middle of connecting, and a program that is
-  // told to stop must end by saying that it did.
+  // Signals are handled from here on, while the worker is still connecting. The time allowed for
+  // stopping starts with the first signal, not when the worker is running: it covers the startup
+  // checks too, which can wait on a database that does not answer. Until the worker is running there
+  // is nothing to stop, so the stop is remembered and carried out as soon as it is. Left to the
+  // default action, a signal would end the program in the middle of connecting, and a program that
+  // is told to stop must end by saying that it did.
   let running: WorkerHandle | undefined;
-  let requested: NodeJS.Signals | undefined;
   let shuttingDown = false;
-  const shutdown = async (signal: NodeJS.Signals, handle: WorkerHandle): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    logger.info("shutdown requested", { signal });
-
-    // A job still running when the time is up is abandoned. Its transaction ends with the
-    // connection, and another worker takes it when its lease runs out.
-    const forceExit = setTimeout(() => {
-      logger.error("graceful shutdown timed out; exiting with jobs in progress");
-      process.exit(1);
-    }, config.shutdownTimeoutMs);
-    forceExit.unref();
-
+  const stop = async (handle: WorkerHandle): Promise<void> => {
     try {
       await handle.stop();
       logger.info("shutdown complete");
@@ -51,8 +40,23 @@ async function main(): Promise<void> {
   // `once` so a second Ctrl-C during a slow drain falls through to the default (terminate).
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
-      if (running === undefined) requested = signal;
-      else void shutdown(signal, running);
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info("shutdown requested", { signal });
+
+      // A job still running when the time is up is abandoned. Its transaction ends with the
+      // connection, and another worker takes it when its lease runs out.
+      const forceExit = setTimeout(() => {
+        logger.error(
+          running === undefined
+            ? "graceful shutdown timed out before the worker had started"
+            : "graceful shutdown timed out; exiting with jobs in progress",
+        );
+        process.exit(1);
+      }, config.shutdownTimeoutMs);
+      forceExit.unref();
+
+      if (running !== undefined) void stop(running);
     });
   }
 
@@ -74,7 +78,8 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  if (requested !== undefined) void shutdown(requested, worker);
+  // Told to stop while it was starting: nothing ran in between, so this is the first stop.
+  if (shuttingDown) void stop(worker);
 
   // A process in an unknown state should die and be restarted by the orchestrator.
   process.on("uncaughtException", (error) => {
