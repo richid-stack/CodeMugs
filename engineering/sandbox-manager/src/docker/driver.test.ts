@@ -25,7 +25,7 @@ const named = args.find((a) => a.startsWith("--name="));
 const name = named ? named.slice(7) : args.find((a) => a.startsWith("codemugs-sandbox-")) || "";
 const killed = path.join(dir, "killed-" + name);
 const out = (fd, text) => {
-  let rest = Buffer.from(text);
+  let rest = Buffer.isBuffer(text) ? text : Buffer.from(text);
   while (rest.length > 0) {
     try { rest = rest.subarray(fs.writeSync(fd, rest)); } catch (e) { if (e.code !== "EAGAIN") throw e; }
   }
@@ -47,6 +47,8 @@ else if (verb === "inspect") {
 } else if (verb === "start") {
   if (cfg.stdout) out(1, cfg.stdout.replace("{name}", name));
   if (cfg.stderr) out(2, cfg.stderr);
+  if (cfg.stdoutBase64) out(1, Buffer.from(cfg.stdoutBase64, "base64"));
+  if (cfg.stderrBase64) out(2, Buffer.from(cfg.stderrBase64, "base64"));
   for (let i = 0; i < (cfg.floodStdout ?? 0); i += 1000) out(1, "x".repeat(1000));
   for (let i = 0; i < (cfg.floodStderr ?? 0); i += 1000) out(2, "y".repeat(1000));
   if (cfg.hang) {
@@ -70,6 +72,9 @@ interface Scenario {
   exitCode?: number;
   stdout?: string;
   stderr?: string;
+  /** Bytes, as base64, for output that is not text. */
+  stdoutBase64?: string;
+  stderrBase64?: string;
   floodStdout?: number;
   floodStderr?: number;
   hang?: boolean;
@@ -395,8 +400,104 @@ describe("limits that are reached", () => {
     const t = await setup({ stdout: "é".repeat(1_000) });
     const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_001 }) }));
     expect(result.stdoutTruncated).toBe(true);
-    // 1001 bytes is half a character past 500 whole ones: the half is replaced, not dropped silently.
-    expect(result.stdout).toBe(`${"é".repeat(500)}\uFFFD`);
+    // 1001 bytes is half a character past 500 whole ones. The half would become three bytes of
+    // replacement character, which is over the limit, so it is left out and the text says it was cut.
+    expect(result.stdout).toBe("é".repeat(500));
+  });
+});
+
+describe("the size of what a run returns", () => {
+  // The limit is in bytes. A byte that is not text becomes U+FFFD, which is three bytes, so a program
+  // could get back three times the limit by writing bytes that are not text.
+  const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+  const raw = (...parts: (Buffer | string)[]) =>
+    Buffer.concat(
+      parts.map((part) => (typeof part === "string" ? Buffer.from(part) : part)),
+    ).toString("base64");
+
+  it("is never more than the limit, even when every byte is one that is not text", async () => {
+    const t = await setup({
+      stdoutBase64: raw(Buffer.alloc(1_000, 0xff)),
+      stderrBase64: raw(Buffer.alloc(1_000, 0xfe)),
+    });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+    expect(bytes(result.stdout)).toBeLessThanOrEqual(1_000);
+    expect(bytes(result.stderr)).toBeLessThanOrEqual(1_000);
+    // The program wrote exactly the limit, so it was not stopped, but what it wrote did not all fit.
+    expect(result.outcome).toBe("exited");
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.stderrTruncated).toBe(true);
+  });
+
+  it("is never more than the limit when the program wrote far more than the limit", async () => {
+    const t = await setup({ stdoutBase64: raw(Buffer.alloc(50_000, 0xff)) });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+    expect(result.outcome).toBe("output_limit_exceeded");
+    expect(bytes(result.stdout)).toBeLessThanOrEqual(1_000);
+    expect(result.stdout).toBe("\uFFFD".repeat(333));
+    expect(result.stdoutTruncated).toBe(true);
+  });
+
+  it("keeps the text that fits, cuts at a whole character, and says that it was cut", async () => {
+    const t = await setup({
+      stdoutBase64: raw("ok", Buffer.from([0xff, 0xff]), "a".repeat(2_000)),
+    });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 100 }) }));
+    expect(result.stdoutTruncated).toBe(true);
+    expect(result.outcome).toBe("output_limit_exceeded");
+    // 100 bytes were kept, which are 104 bytes as text; the last four characters are left out.
+    expect(result.stdout).toBe(`ok\uFFFD\uFFFD${"a".repeat(92)}`);
+    expect(bytes(result.stdout)).toBe(100);
+  });
+
+  it("is the same text as before when it fits, and is not reported as cut", async () => {
+    const t = await setup({ stdoutBase64: raw("ok", Buffer.from([0xff]), " é 日本 \u{1F600}") });
+    const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: 1_000 }) }));
+    expect(result.stdout).toBe("ok\uFFFD é 日本 \u{1F600}");
+    expect(result.stdoutTruncated).toBe(false);
+    expect(result.stderrTruncated).toBe(false);
+    expect(result.outcome).toBe("exited");
+  });
+
+  it("counts every size of character by the bytes it takes", async () => {
+    // The last character that takes 1, 2 and 3 bytes and the first that takes 2, 3 and 4. After the
+    // characters come bytes that are not text, up to the limit, and how many replacements fit after
+    // the characters says whether the characters were counted right.
+    const sizes: [string, number][] = [
+      ["\u007f", 1],
+      ["\u0080", 2],
+      ["\u07ff", 2],
+      ["\u0800", 3],
+      ["\uffff", 3],
+      ["\u{10000}", 4],
+    ];
+    const limit = 20;
+    for (const [character, size] of sizes) {
+      const count = Math.floor(16 / size);
+      const rest = limit - count * size;
+      const t = await setup({
+        stdoutBase64: raw(character.repeat(count), Buffer.alloc(rest, 0xff)),
+      });
+      const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: limit }) }));
+      expect(bytes(character), `U+${character.codePointAt(0)?.toString(16)}`).toBe(size);
+      expect(result.stdout, `U+${character.codePointAt(0)?.toString(16)}`).toBe(
+        character.repeat(count) + "\uFFFD".repeat(Math.floor(rest / 3)),
+      );
+    }
+  });
+
+  it("is never more than the limit wherever a character is cut", async () => {
+    // Characters of four bytes, with the limit at each place in one of them.
+    for (const limit of [1_000, 1_001, 1_002, 1_003, 1_004]) {
+      const t = await setup({ stdoutBase64: raw("\u{1F600}".repeat(1_000)) });
+      const result = await t.driver.run(t.request({ policy: policyWith({ outputBytes: limit }) }));
+      expect(bytes(result.stdout), `limit ${limit}`).toBeLessThanOrEqual(limit);
+      // Whole characters, and at most one replacement for the one that was cut.
+      expect(result.stdout.replace(/\uFFFD$/u, ""), `limit ${limit}`).toBe(
+        "\u{1F600}".repeat(Math.floor(limit / 4)),
+      );
+      expect(result.stdoutTruncated, `limit ${limit}`).toBe(true);
+    }
   });
 });
 

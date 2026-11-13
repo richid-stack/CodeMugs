@@ -236,6 +236,9 @@ describe("paths inside the sandbox", () => {
         "/devices",
         "/sys.d",
         "/x/proc",
+        "/tmpdir",
+        "/tmp-area",
+        "/x/tmp",
       ]) {
         expect(() => parseSandboxPolicy(apply(field, path))).not.toThrow();
       }
@@ -282,7 +285,16 @@ describe("paths inside the sandbox", () => {
   });
 
   it.each(places)("%s refuses the places that belong to the runtime", (field) => {
-    for (const path of ["/proc", "/proc/1", "/sys", "/sys/fs/cgroup", "/dev", "/dev/shm"]) {
+    for (const path of [
+      "/proc",
+      "/proc/1",
+      "/sys",
+      "/sys/fs/cgroup",
+      "/dev",
+      "/dev/shm",
+      "/tmp",
+      "/tmp/work",
+    ]) {
       refusedAt(apply(field, path), field);
     }
   });

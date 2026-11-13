@@ -4,6 +4,16 @@ import type { SandboxRunRequest } from "../request.js";
 const UNPRIVILEGED_UID = 65534;
 const UNPRIVILEGED_GID = 65534;
 
+/**
+ * `/tmp` is mounted empty and read-only, whatever the runtime. gVisor would otherwise give the
+ * program a writable one of its own with no size and no `noexec` (ADR 0020), and the policy does not
+ * allow a mount there.
+ */
+const READ_ONLY_TMP = "/tmp";
+
+/** The size of `/dev/shm`, which Docker would otherwise take from the daemon's own setting. */
+const SHARED_MEMORY_MB = 64;
+
 /** The label every container of ours carries, so that a leftover one can be found and removed. */
 export const SANDBOX_LABEL = "codemugs.sandbox=true";
 
@@ -16,9 +26,12 @@ export const SANDBOX_LABEL = "codemugs.sandbox=true";
  *   any, and a user that owns nothing.
  * - Memory, swap (none: the same value), processes, processors, open files and core files are
  *   limited, and the output is not kept by the daemon (it would fill the host's disk).
- * - The only writable place is a size-limited memory filesystem that cannot hold programs to run,
- *   and that only the unprivileged user can use. (Docker makes it owned by root unless told
- *   otherwise, which the real daemon showed: the user could not write to it.)
+ * - The writable places are the scratch space, a size-limited memory filesystem that cannot hold
+ *   programs to run and that only the unprivileged user can use (Docker makes it owned by root
+ *   unless told otherwise, which the real daemon showed: the user could not write to it), and shared
+ *   memory (`/dev/shm`, with a size written here). The hardened container also has `/dev/mqueue`,
+ *   which Docker mounts and which has no size of its own. All of it is memory and counts against
+ *   the memory limit, and nothing a program writes reaches the host's disk (ADR 0020).
  * - The source is a read-only bind mount, written with `--mount` (which refuses a missing path)
  *   and not `-v` (which would create it).
  * - The program is the entrypoint and the rest of the command follows the image, where an item
@@ -59,6 +72,8 @@ export function dockerCreateArguments(
     "--ulimit=core=0:0",
     "--log-driver=none",
     `--tmpfs=${mounts.scratch.containerPath}:rw,noexec,nosuid,nodev,mode=0700,uid=${UNPRIVILEGED_UID},gid=${UNPRIVILEGED_GID},size=${mounts.scratch.sizeMb}m`,
+    `--tmpfs=${READ_ONLY_TMP}:ro,noexec,nosuid,nodev,size=1m`,
+    `--shm-size=${SHARED_MEMORY_MB}m`,
   ];
   if (mounts.source !== undefined && sourceDirectory !== null) {
     args.push(
