@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createOrganisation, createProject, issueApiKey } from "@codemugs/auth";
 import { EVENTS_AGGREGATE_KIND, recordEvents, type IngestScope } from "@codemugs/ingestion";
@@ -222,6 +222,24 @@ describeDatabase("the program with a database", () => {
     expect(result.code).toBe(0);
   });
 
+  it("stops cleanly when told to while it is still starting", async () => {
+    // The signal is sent the moment the program says it is starting, so that it arrives while the
+    // worker is still connecting. It used to end the program by the default action then, because
+    // the handlers were put in only after the worker had started.
+    const program = launch(environment());
+    program.child.stdout?.on("data", function onData(chunk: Buffer) {
+      if (!chunk.toString().includes("worker starting")) return;
+      program.child.stdout?.off("data", onData);
+      program.child.kill("SIGTERM");
+    });
+    const result = await program.finished;
+    expect(result.signal).toBeNull();
+    expect(result.code).toBe(0);
+    const messages = logLines(result.stdout).map((line) => line["msg"]);
+    expect(messages).toContain("shutdown requested");
+    expect(messages).toContain("shutdown complete");
+  });
+
   it("does not start with the two connections the wrong way round", async () => {
     const result = await launch(
       environment({
@@ -260,6 +278,45 @@ describeDatabase("the program with a database", () => {
     });
     expect(result.stdout + result.stderr).not.toContain(password);
     expect(result.stdout + result.stderr).not.toContain(String(address.port));
+  });
+
+  it("ends within its shutdown time when told to stop while the database does not answer", async () => {
+    // A server that takes the connection and says nothing. The startup checks wait on it for the
+    // pool's own timeout, which is longer than the time the program is given to stop.
+    const sockets: Socket[] = [];
+    const server = createServer((socket) => {
+      sockets.push(socket);
+      socket.on("error", () => undefined);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("no port");
+    const url = new URL(database.appUrl);
+    url.hostname = "127.0.0.1";
+    url.port = String(address.port);
+    try {
+      const program = launch(
+        environment({ DATABASE_URL: url.toString(), SHUTDOWN_TIMEOUT_MS: "500" }),
+      );
+      let asked = 0;
+      program.child.stdout?.on("data", function onData(chunk: Buffer) {
+        if (!chunk.toString().includes("worker starting")) return;
+        program.child.stdout?.off("data", onData);
+        asked = Date.now();
+        program.child.kill("SIGTERM");
+      });
+      const result = await program.finished;
+      expect(asked).toBeGreaterThan(0);
+      expect(result.code).toBe(1);
+      expect(Date.now() - asked).toBeLessThan(3_000);
+      expect(logLines(result.stdout).map((line) => line["msg"])).toContain(
+        "graceful shutdown timed out before the worker had started",
+      );
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
   });
 
   it("finishes the job it is working on before it exits", async () => {
