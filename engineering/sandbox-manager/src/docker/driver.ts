@@ -120,6 +120,9 @@ function withinBytes(text: string, limit: number): string {
   return text.slice(0, end);
 }
 
+/** 128 + 9: how a program that was ended by SIGKILL, as the kernel does for memory, looks to its parent. */
+const KILLED_BY_SIGKILL = 137;
+
 /**
  * The first driver: a hardened container, run by the docker command. It is the weakest of the
  * isolation levels, since the container shares the host's kernel, and is not enough for hostile
@@ -307,7 +310,12 @@ function createContainerDriver(options: DockerDriverOptions, variant: Variant): 
     if (reason !== null) {
       outcome = reason;
       exitCode = null;
-    } else if (state.oomKilled) {
+    } else if (state.oomKilled || state.exitCode === KILLED_BY_SIGKILL) {
+      // Docker's record of an out-of-memory kill is sometimes missed under the hardened container
+      // (2 of 40 runs, and 5 of 40 with four running at once, in the probe of ADR 0020), and then
+      // all that is left is that the program ended by SIGKILL. Nothing inside the sandbox can send
+      // that to the first process, and a kill of ours is reported above, so it is read as the
+      // memory limit. A program that exits with 137 on its own is read the same way.
       outcome = "out_of_memory";
       exitCode = null;
     } else {

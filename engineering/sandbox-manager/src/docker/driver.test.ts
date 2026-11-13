@@ -387,6 +387,41 @@ describe("limits that are reached", () => {
     expect(result).toMatchObject({ outcome: "out_of_memory", exitCode: null });
   });
 
+  it("reports a program that ended by SIGKILL as stopped by the memory limit, when docker did not say so", async () => {
+    // Docker does not always record an out-of-memory kill. The exit code is then all there is.
+    const t = await setup({
+      inspect: JSON.stringify({ Running: false, OOMKilled: false, ExitCode: 137 }),
+    });
+    const result = await t.driver.run(t.request());
+    expect(result).toMatchObject({ outcome: "out_of_memory", exitCode: null });
+  });
+
+  it.each([0, 1, 136, 138, 143])(
+    "reports exit code %i as the program's own exit",
+    async (exitCode) => {
+      const t = await setup({
+        inspect: JSON.stringify({ Running: false, OOMKilled: false, ExitCode: exitCode }),
+      });
+      const result = await t.driver.run(t.request());
+      expect(result).toMatchObject({ outcome: "exited", exitCode });
+    },
+  );
+
+  it("reports the limit of ours that stopped a program, not the SIGKILL that it caused", async () => {
+    // Stopping a container ends it by SIGKILL, so exit code 137 is what a stop of ours leaves.
+    for (const scenario of [
+      { hang: true, policy: { wallClockSeconds: 1 }, outcome: "timed_out" },
+      { floodStdout: 100_000, policy: { outputBytes: 1_000 }, outcome: "output_limit_exceeded" },
+    ] as const) {
+      const t = await setup({
+        ...("hang" in scenario ? { hang: true } : { floodStdout: scenario.floodStdout }),
+        inspect: JSON.stringify({ Running: false, OOMKilled: false, ExitCode: 137 }),
+      });
+      const result = await t.driver.run(t.request({ policy: policyWith(scenario.policy) }));
+      expect(result.outcome).toBe(scenario.outcome);
+    }
+  });
+
   it("reports the reason that came first when a limit was reached and the memory ran out too", async () => {
     const t = await setup({
       hang: true,
