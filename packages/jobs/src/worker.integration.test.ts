@@ -98,6 +98,19 @@ describeDatabase("the worker", () => {
   const statusOf = async (jobId: string): Promise<string> => (await h.job(jobId)).status;
   const waitForStatus = (jobId: string, status: string): Promise<void> =>
     waitFor(`job ${jobId} to be ${status}`, async () => (await statusOf(jobId)) === status);
+  /**
+   * The database shows a job's new status a moment before the worker reports it to its observer: the
+   * worker reports when the call that changed the status returns. A test that looks at the events
+   * after it has seen the status has to wait for the event too, or it sometimes looks too early.
+   */
+  const waitForReport = (
+    events: readonly WorkerEvent[],
+    jobId: string,
+    type: WorkerEvent["type"],
+  ) =>
+    waitFor(`the worker to report ${type} for job ${jobId}`, () =>
+      events.some((event) => event.type === type && "jobId" in event && event.jobId === jobId),
+    );
 
   describe("running jobs", () => {
     it("runs a job in its own tenant and marks it succeeded", async () => {
@@ -115,6 +128,7 @@ describeDatabase("the worker", () => {
         },
       });
       await waitForStatus(jobId, "succeeded");
+      await waitForReport(events, jobId, "succeeded");
 
       expect(seen).toEqual([{ tenant: orgA, attempt: 1, subjectId }]);
       expect(await h.effects(subjectId)).toBe(1);
@@ -190,7 +204,9 @@ describeDatabase("the worker", () => {
       expect(misplaced.rows[0]?.n).toBe("0");
       // Every worker took part, so this did test jobs being shared.
       for (const { events } of workers) {
-        expect(events.filter((event) => event.type === "succeeded").length).toBeGreaterThan(0);
+        await waitFor("each worker to report a job it finished", () =>
+          events.some((event) => event.type === "succeeded"),
+        );
       }
     });
 
@@ -252,6 +268,7 @@ describeDatabase("the worker", () => {
         },
       });
       await waitForStatus(jobId, "succeeded");
+      await waitForReport(events, jobId, "succeeded");
 
       // The first attempt's write was undone: the effect happened once, not twice.
       expect(await h.effects(subjectId)).toBe(1);
@@ -300,6 +317,7 @@ describeDatabase("the worker", () => {
         },
       });
       await waitForStatus(jobId, "dead");
+      await waitForReport(events, jobId, "dead");
 
       const row = await h.job(jobId);
       expect(row).toMatchObject({
@@ -415,6 +433,7 @@ describeDatabase("the worker", () => {
       // When the lease runs out, the job is taken again and finished.
       await h.expire(jobId);
       await waitForStatus(jobId, "succeeded");
+      await waitForReport(events, jobId, "succeeded");
       const row = await h.job(jobId);
       expect(row.attempts).toBe(2);
       expect(row.last_error_code).toBe("lease_expired"); // The lost attempt stays on record.
@@ -435,6 +454,7 @@ describeDatabase("the worker", () => {
         },
       });
       await waitForStatus(jobId, "dead");
+      await waitForReport(events, jobId, "dead");
       expect(calls).toBe(0);
       expect(events).toContainEqual({
         type: "dead",
