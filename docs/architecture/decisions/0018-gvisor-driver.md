@@ -57,7 +57,7 @@ What follows from it:
 
 ## Not decided, or not done
 
-- **gVisor is not a virtual machine and no escape test has been run.** The tests show that the restrictions take effect and that the program is under a different kernel. They are not attempts to break out of gVisor, and a flaw in gVisor is a way out. Release gate 8 stays not started. The escape-primitive and resource-abuse tests that run in CI on both drivers are the next step.
+- **gVisor is not a virtual machine.** The tests of this record show that the restrictions take effect and that the program is under a different kernel. A flaw in gVisor is a way out. [ADR 0020](0020-escape-and-abuse-tests.md) adds attempts to get out, on both drivers, and what they found. They test the doors, not what is behind them, and release gate 8 stays not started.
 - **Which gVisor platform was in use is not recorded,** and the flags are the defaults. A host without the same virtualisation support may use another platform with other properties.
 - **Performance and compatibility are not measured.** A program that needs a system call gVisor does not implement fails. The 49 real-runtime tests ran in about 22 seconds on the runner, which says almost nothing.
 - **Whether Docker's seccomp profile applies to gVisor's own process on the host is not known.** What the program sees (0) is not that.
