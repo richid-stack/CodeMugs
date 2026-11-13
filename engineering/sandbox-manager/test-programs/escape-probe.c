@@ -82,6 +82,7 @@ static const char *errname(int e) {
     case ENODATA: return "ENODATA";
     case EOPNOTSUPP: return "EOPNOTSUPP";
     case EAFNOSUPPORT: return "EAFNOSUPPORT";
+    case EPROTONOSUPPORT: return "EPROTONOSUPPORT";
     case ENXIO: return "ENXIO";
     case ESTALE: return "ESTALE";
     case ECONNREFUSED: return "ECONNREFUSED";
@@ -103,7 +104,8 @@ static int verdict(long result, int absent) {
   }
   int e = errno;
   int denied = e == EPERM || e == EACCES || e == ENOSYS || e == EAFNOSUPPORT || e == EOPNOTSUPP ||
-               e == EROFS || e == ENODEV || (absent && (e == ENOENT || e == ENXIO));
+               e == EROFS || e == ENODEV || e == EPROTONOSUPPORT ||
+               (absent && (e == ENOENT || e == ENXIO));
   errno = e;
   return denied ? DENIED : REACHABLE;
 }
