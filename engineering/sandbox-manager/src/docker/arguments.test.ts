@@ -45,6 +45,8 @@ describe("the arguments of docker create", () => {
       "--ulimit=core=0:0",
       "--log-driver=none",
       "--tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=64m",
+      "--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m",
+      "--shm-size=64m",
       `--mount=type=bind,src=${SOURCE},dst=/workspace,readonly`,
       "--workdir=/scratch",
       "--entrypoint=node",
@@ -239,6 +241,36 @@ describe("the arguments of docker create", () => {
     expect(options).toContain("gid=65534");
     expect(options).toContain("mode=0700");
     expect(args()).toContain("--user=65534:65534");
+  });
+
+  it("mount /tmp empty, read-only and unable to run programs, and only there", () => {
+    const tmpfs = args().filter((arg) => arg.startsWith("--tmpfs="));
+    expect(tmpfs).toHaveLength(2);
+    expect(tmpfs).toContain("--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m");
+    // The scratch space is the policy's own, and is the only one that can be written.
+    const writable = tmpfs.filter((arg) => (arg.split(":")[1]?.split(",") ?? []).includes("rw"));
+    expect(writable).toHaveLength(1);
+    expect(writable[0]).toMatch(/^--tmpfs=\/scratch:/);
+  });
+
+  it("mount /tmp the same way for every runtime, so that no runtime makes a writable one", () => {
+    const without = args().filter((arg) => arg.includes("/tmp") || arg.startsWith("--shm"));
+    const withRuntime = dockerCreateArguments(request(), "codemugs-sandbox-test", "runsc").filter(
+      (arg) => arg.includes("/tmp") || arg.startsWith("--shm"),
+    );
+    expect(without).toEqual(["--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m", "--shm-size=64m"]);
+    expect(withRuntime).toEqual(without);
+  });
+
+  it("write down the size of shared memory instead of leaving it to the daemon", () => {
+    expect(args().filter((arg) => arg.startsWith("--shm-size"))).toEqual(["--shm-size=64m"]);
+    const policy = validPolicyInput();
+    policy.limits.memoryMb = 16;
+    policy.mounts.scratch.sizeMb = 1;
+    // It does not follow the policy: it is a fixed ceiling, and the memory limit is what bites.
+    expect(args(request({ policy })).filter((arg) => arg.startsWith("--shm-size"))).toEqual([
+      "--shm-size=64m",
+    ]);
   });
 
   it("label the container, so that a leftover one can be found", () => {

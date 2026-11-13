@@ -72,6 +72,7 @@ type Control = (args: readonly string[], timeoutMs: number) => Promise<Finished>
 class Capture {
   readonly #chunks: Buffer[] = [];
   #size = 0;
+  /** True once the program has written more than `limit` bytes. */
   truncated = false;
 
   constructor(readonly limit: number) {}
@@ -86,9 +87,37 @@ class Capture {
     }
   }
 
-  text(): string {
-    return Buffer.concat(this.#chunks).toString("utf8");
+  /**
+   * The text, which is never more than `limit` bytes long. At most `limit` bytes were kept, but a
+   * byte that is not text, or a character that was cut in the middle, becomes U+FFFD, which is three
+   * bytes. A program could get back three times the limit by writing bytes that are not text. So the
+   * text is cut again, at a whole character, and is then reported as cut.
+   */
+  result(): { readonly text: string; readonly truncated: boolean } {
+    const decoded = Buffer.concat(this.#chunks).toString("utf8");
+    const text = withinBytes(decoded, this.limit);
+    return { text, truncated: this.truncated || text.length < decoded.length };
   }
+}
+
+function utf8Size(codePoint: number): number {
+  if (codePoint < 0x80) return 1;
+  if (codePoint < 0x800) return 2;
+  return codePoint < 0x10000 ? 3 : 4;
+}
+
+/** The longest start of `text` that is at most `limit` bytes in UTF-8 and ends between characters. */
+function withinBytes(text: string, limit: number): string {
+  if (Buffer.byteLength(text, "utf8") <= limit) return text;
+  let used = 0;
+  let end = 0;
+  for (const character of text) {
+    const size = utf8Size(character.codePointAt(0) ?? 0);
+    if (used + size > limit) break;
+    used += size;
+    end += character.length;
+  }
+  return text.slice(0, end);
 }
 
 /**
@@ -180,11 +209,11 @@ function createContainerDriver(options: DockerDriverOptions, variant: Variant): 
       };
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        done({ code: null, stdout: out.text(), notStarted: false });
+        done({ code: null, stdout: out.result().text, notStarted: false });
       }, timeoutMs);
       child.stdout.on("data", (chunk: Buffer) => out.add(chunk));
       child.on("error", () => done({ code: null, stdout: "", notStarted: true }));
-      child.on("close", (code) => done({ code, stdout: out.text(), notStarted: false }));
+      child.on("close", (code) => done({ code, stdout: out.result().text, notStarted: false }));
     });
   };
 
@@ -285,13 +314,15 @@ function createContainerDriver(options: DockerDriverOptions, variant: Variant): 
       outcome = "exited";
       exitCode = state.exitCode;
     }
+    const out = stdout.result();
+    const err = stderr.result();
     return {
       outcome,
       exitCode,
-      stdout: stdout.text(),
-      stderr: stderr.text(),
-      stdoutTruncated: stdout.truncated,
-      stderrTruncated: stderr.truncated,
+      stdout: out.text,
+      stderr: err.text,
+      stdoutTruncated: out.truncated,
+      stderrTruncated: err.truncated,
       durationMs,
     };
   }

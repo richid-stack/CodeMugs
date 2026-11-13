@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { release, tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { IsolationLevel, SandboxDriver } from "../driver.js";
-import { validPolicyInput, type PolicyInput } from "../fixtures.js";
+import type { PolicyInput } from "../fixtures.js";
 import { validateRunRequest } from "../request.js";
 import { SANDBOX_LABEL } from "./arguments.js";
-import { createDockerDriver, createGvisorDriver, type DockerDriverOptions } from "./driver.js";
+import { createGvisorDriver } from "./driver.js";
+import { docker, limitedPolicy, runtimes, type Runtime } from "./integration.support.js";
 
 /**
  * These run real containers, so they need a docker daemon and an image that is already on the host,
@@ -22,27 +20,8 @@ import { createDockerDriver, createGvisorDriver, type DockerDriverOptions } from
  */
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
-const run = promisify(execFile);
-const image = process.env["CODEMUGS_TEST_SANDBOX_IMAGE"];
-
-async function docker(...args: string[]): Promise<string> {
-  return (await run("docker", args)).stdout;
-}
-
-const imagePresent =
-  image !== undefined &&
-  (await docker("image", "inspect", "--format", "{{.Id}}", image).then(
-    () => true,
-    () => false,
-  ));
-
 /** What is the same for every driver is written once below. What differs is written here. */
-interface Flavour {
-  readonly name: "docker" | "gvisor";
-  readonly create: (options: DockerDriverOptions) => SandboxDriver;
-  readonly isolation: IsolationLevel;
-  readonly usable: boolean;
-  readonly required: boolean;
+interface Flavour extends Runtime {
   /** True when the code inside runs on the host's kernel. */
   readonly sharesHostKernel: boolean;
   /** What the shell says when a write is refused on a read-only mount. */
@@ -60,12 +39,7 @@ interface Flavour {
 
 const flavours: readonly Flavour[] = [
   {
-    name: "docker",
-    create: createDockerDriver,
-    isolation: "hardened-container",
-    usable:
-      imagePresent && (await createDockerDriver({ workspaceRoot: "/" }).availability()).available,
-    required: process.env["REQUIRE_DOCKER_TESTS"] === "true",
+    ...runtimes[0],
     sharesHostKernel: true,
     readOnlyMessage: "Read-only file system",
     seccompInProgram: true,
@@ -73,12 +47,7 @@ const flavours: readonly Flavour[] = [
     fork: { limit: 32, atMost: 32, atLeast: 8 },
   },
   {
-    name: "gvisor",
-    create: createGvisorDriver,
-    isolation: "gvisor",
-    usable:
-      imagePresent && (await createGvisorDriver({ workspaceRoot: "/" }).availability()).available,
-    required: process.env["REQUIRE_GVISOR_TESTS"] === "true",
+    ...runtimes[1],
     sharesHostKernel: false,
     readOnlyMessage: "Permission denied",
     seccompInProgram: false,
@@ -86,21 +55,6 @@ const flavours: readonly Flavour[] = [
     fork: { limit: 128, atMost: 128, atLeast: 4 },
   },
 ];
-
-function limitedPolicy(change: (policy: PolicyInput) => void = () => undefined): PolicyInput {
-  const value = validPolicyInput();
-  value.image = image ?? value.image;
-  value.limits = {
-    cpus: 1,
-    memoryMb: 256,
-    pids: 64,
-    wallClockSeconds: 30,
-    outputBytes: 1_048_576,
-  };
-  value.mounts.scratch.sizeMb = 16;
-  change(value);
-  return value;
-}
 
 for (const flavour of flavours) {
   const suite = flavour.usable || flavour.required ? describe : describe.skip;

@@ -27,8 +27,11 @@ const FLOORS = Object.freeze({ cpus: 0.01, memoryMb: 16, pids: 1, scratchMb: 1, 
 const IMAGE_BY_DIGEST =
   /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/;
 
-/** Places in a container that belong to the runtime, not to a policy. */
-const RESERVED_PREFIXES = ["/proc", "/sys", "/dev"] as const;
+/**
+ * Places in a container that belong to the runtime, not to a policy. `/tmp` is one of them: the
+ * driver mounts it empty and read-only (ADR 0020), and a mount of the policy's there would clash.
+ */
+const RESERVED_PREFIXES = ["/proc", "/sys", "/dev", "/tmp"] as const;
 
 /** Where in the sandbox something is mounted: absolute, plain, and not on a runtime path. */
 const containerPath = z
@@ -40,7 +43,7 @@ const containerPath = z
   )
   .refine(
     (path) => !RESERVED_PREFIXES.some((prefix) => isInside(path, prefix)),
-    "must not be on /proc, /sys or /dev",
+    "must not be on /proc, /sys, /dev or /tmp",
   );
 
 const wholeNumber = (floor: number, ceiling: number) => z.number().int().min(floor).max(ceiling);
