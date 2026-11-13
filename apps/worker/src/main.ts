@@ -19,8 +19,6 @@ async function main(): Promise<void> {
 
   const logger = createLogger(config.logLevel);
 
-  logger.info("worker starting");
-
   // Signals are handled from here on, while the worker is still connecting. Until it is running
   // there is nothing to stop, so a signal is remembered and acted on as soon as it is. Left to the
   // default action it would end the program in the middle of connecting, and a program that is
@@ -57,6 +55,10 @@ async function main(): Promise<void> {
       else void shutdown(signal, running);
     });
   }
+
+  // After the handlers are in, so that whoever waits for this line to send a signal gets the stop
+  // that it asked for and not the default action.
+  logger.info("worker starting");
 
   let worker: WorkerHandle;
   try {
