@@ -103,9 +103,10 @@ for (const runtime of runtimes) {
     });
 
     it("counts what it keeps in shared memory and in the scratch space against its memory", async () => {
-      // 75 MB of files, all of them memory, in a sandbox that has 64.
+      // 75 MB of files, all of them memory, in a sandbox that has 64. The second program replaces
+      // the shell, so that it is the one the kernel stops, and the run ends by SIGKILL.
       const result = await ws.sh(
-        "dd if=/dev/zero of=/dev/shm/a bs=1M count=60 2>/dev/null; dd if=/dev/zero of=/scratch/b bs=1M count=15 2>/dev/null; echo done",
+        "dd if=/dev/zero of=/dev/shm/a bs=1M count=60 2>/dev/null; exec dd if=/dev/zero of=/scratch/b bs=1M count=15 2>/dev/null",
         (policy) => {
           policy.limits.memoryMb = 64;
           policy.limits.wallClockSeconds = 90;

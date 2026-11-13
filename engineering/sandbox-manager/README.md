@@ -80,7 +80,7 @@ The same driver with one more option, `--runtime=runsc`: everything above applie
 
 A container that could not be started (a program that is not in the image, a sandbox that could not be made) is `start_failed` for both drivers, read from docker's own record of the reason, and nothing docker printed is kept.
 
-The result says how the run ended (`exited`, `timed_out`, `output_limit_exceeded` or `out_of_memory`). The wall-clock limit and the output limit are enforced by this process, which kills the container; when both apply the first one found is reported. A failure is a `SandboxError` with a fixed sentence (`unavailable`, `source_not_allowed`, `start_failed`, `run_failed` or `cleanup_failed`), never anything docker or the program said. A container that cannot be removed outranks every other result.
+The result says how the run ended (`exited`, `timed_out`, `output_limit_exceeded` or `out_of_memory`; the last is reported when docker says the kernel stopped the program for memory, or when the program ended by SIGKILL, exit code 137, and a limit of ours did not stop it). The wall-clock limit and the output limit are enforced by this process, which kills the container; when both apply the first one found is reported. A failure is a `SandboxError` with a fixed sentence (`unavailable`, `source_not_allowed`, `start_failed`, `run_failed` or `cleanup_failed`), never anything docker or the program said. A container that cannot be removed outranks every other result.
 
 ## Tests
 

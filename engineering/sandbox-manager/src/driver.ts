@@ -29,7 +29,10 @@ export type SandboxOutcome =
   | "timed_out"
   /** The program wrote more than the policy allows and the sandbox was stopped. */
   | "output_limit_exceeded"
-  /** The program went over its memory limit and was stopped. */
+  /**
+   * The program went over its memory limit and was stopped: Docker said so, or the program ended
+   * by SIGKILL (exit code 137) without a limit of ours having stopped it.
+   */
   | "out_of_memory";
 
 export interface SandboxResult {
