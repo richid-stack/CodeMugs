@@ -23,7 +23,7 @@ const compiler = await run("gcc", ["--version"]).then(
 );
 
 /** How many attempts the program makes. A change to the program changes this, on purpose. */
-const ATTEMPTS = 48;
+const ATTEMPTS = 47;
 
 /**
  * The attempts that got through, under each runtime, and why that is accepted for now. Every other

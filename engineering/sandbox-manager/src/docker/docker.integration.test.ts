@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PolicyInput } from "../fixtures.js";
 import { validateRunRequest } from "../request.js";
-import { SANDBOX_LABEL } from "./arguments.js";
 import { createGvisorDriver } from "./driver.js";
-import { docker, limitedPolicy, runtimes, type Runtime } from "./integration.support.js";
+import { containersOf, limitedPolicy, runtimes, type Runtime } from "./integration.support.js";
 
 /**
  * These run real containers, so they need a docker daemon and an image that is already on the host,
@@ -83,8 +82,7 @@ for (const flavour of flavours) {
     afterEach(async () => {
       // Whatever a test did, no container of ours may be left.
       if (!flavour.usable) return;
-      const left = await docker("ps", "-a", "-q", "--filter", `label=${SANDBOX_LABEL}`);
-      expect(left.trim()).toBe("");
+      expect(await containersOf(base)).toEqual([]);
     });
 
     afterAll(async () => {
@@ -385,8 +383,7 @@ gvisorSuite("what only gVisor does", () => {
   });
 
   afterEach(async () => {
-    const left = await docker("ps", "-a", "-q", "--filter", `label=${SANDBOX_LABEL}`);
-    expect(left.trim()).toBe("");
+    expect(await containersOf(base)).toEqual([]);
   });
 
   afterAll(async () => {

@@ -29,6 +29,29 @@ export const imagePresent =
     () => false,
   ));
 
+/**
+ * The containers of ours that were made for a directory: the ones that mount a directory under it.
+ * Test files run at the same time against the one daemon, so "no container of ours is left" cannot
+ * be asked of the whole daemon, which has the containers of the other files in it.
+ */
+export async function containersOf(directory: string): Promise<string[]> {
+  const ids = (await docker("ps", "-a", "-q", "--filter", `label=${SANDBOX_LABEL}`))
+    .split("\n")
+    .filter((id) => id !== "");
+  const own: string[] = [];
+  for (const id of ids) {
+    // A container that another file removes between the two commands is not ours.
+    const sources = await docker(
+      "inspect",
+      "--format",
+      "{{range .Mounts}}{{.Source}}\n{{end}}",
+      id,
+    ).catch(() => "");
+    if (sources.split("\n").some((source) => source.startsWith(`${directory}/`))) own.push(id);
+  }
+  return own;
+}
+
 /** A driver that can be tested, whether the machine can run it, and whether CI demands that it can. */
 export interface Runtime {
   readonly name: "docker" | "gvisor";
@@ -123,8 +146,7 @@ export function useWorkspace(runtime: Runtime, prefix: string): Workspace {
   afterEach(async () => {
     // Whatever a test did, no container of ours may be left.
     if (!runtime.usable) return;
-    const left = await docker("ps", "-a", "-q", "--filter", `label=${SANDBOX_LABEL}`);
-    expect(left.trim()).toBe("");
+    expect(base === undefined ? [] : await containersOf(base)).toEqual([]);
   });
 
   afterAll(async () => {
