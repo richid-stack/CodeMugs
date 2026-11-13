@@ -1,0 +1,45 @@
+# TEMPORARY. Counts what Docker reports when a program is stopped by its memory limit, under the
+# hardened container and under gVisor, alone and with several running at once. Removed after.
+name: Probe memory limit
+on:
+  push:
+    branches: [probe/oom-flake]
+    paths: [".github/workflows/probe-oom.yml"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: Probe memory limit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Install gVisor (pinned release and checksum, as in ci.yml) and run the scenario
+        run: |
+          cat > probe.sh <<'EOS'
+          set -u
+          IMG=docker.io/library/alpine@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+          docker pull -q "$IMG" >/dev/null
+          wget -q https://storage.googleapis.com/gvisor/releases/release/20261109.0/x86_64/gvisor.tar.zstd
+          echo '0a0041fd862f4ea3042a9db8d41c742f48a01f909699adc2a0256e46d85e53f97b82b9fd154b3dce636f62b8d557677639f91c77d13f3f875ff9fa535275393c  gvisor.tar.zstd' | sha512sum -c -
+          sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          sleep 3
+          base=(--network=none --ipc=private --read-only --cap-drop=ALL --security-opt=no-new-privileges --user=65534:65534 --ulimit=nofile=1024:1024 --ulimit=core=0:0 --log-driver=none)
+          one() { # runtime, name: prints "oomkilled exitcode stdout"
+            local rt=$1; local rtflag=(); [ "$rt" = runsc ] && rtflag=(--runtime=runsc)
+            local n=oom-$RANDOM-$RANDOM
+            docker create --name "$n" "${rtflag[@]}" "${base[@]}" --pids-limit=64 --memory=64m --memory-swap=64m --cpus=1 --tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=16m --tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m --shm-size=64m --workdir=/scratch --entrypoint=sh "$IMG" -c "x=\$(head -c 200000000 /dev/zero | tr '\\0' a); echo done" >/dev/null || { echo "create-failed"; return; }
+            local out; out=$(timeout 90 docker start -a "$n" 2>&1 | tr -d '\n' | head -c 60)
+            echo "$(docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}}' "$n") [$out]"
+            docker rm -f "$n" >/dev/null
+          }
+          for rt in runc runsc; do
+            echo "### $rt, alone, 40 runs"
+            for i in $(seq 1 40); do one $rt; done | sort | uniq -c
+            echo "### $rt, 4 at once, 10 rounds"
+            for r in $(seq 1 10); do for k in 1 2 3 4; do one $rt & done; wait; done | sort | uniq -c
+          done
+          echo "### end"
+          EOS
+          bash probe.sh 2>&1
