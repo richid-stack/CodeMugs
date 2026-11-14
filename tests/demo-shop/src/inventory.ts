@@ -13,33 +13,47 @@ export interface StockStore {
 
 export class MemoryStockStore implements StockStore {
   readonly #stock = new Map<string, number>();
+  readonly #latencyMs: number;
 
-  constructor(initial: Readonly<Record<string, number>>) {
+  /**
+   * `latencyMs` is how long each call takes to come back, as a call to a database does. A call
+   * does what it does at once and then waits that long, so calls that overlap in time overlap in
+   * what they see. With none, it only gives other work a turn.
+   */
+  constructor(initial: Readonly<Record<string, number>>, latencyMs = 0) {
     for (const [sku, quantity] of Object.entries(initial)) this.#stock.set(sku, quantity);
+    this.#latencyMs = latencyMs;
+  }
+
+  #reply(): Promise<void> {
+    return this.#latencyMs > 0
+      ? new Promise((resolve) => setTimeout(resolve, this.#latencyMs))
+      : Promise.resolve();
   }
 
   async get(sku: string): Promise<number> {
-    await Promise.resolve();
-    return this.#stock.get(sku) ?? 0;
+    const quantity = this.#stock.get(sku) ?? 0;
+    await this.#reply();
+    return quantity;
   }
 
   async set(sku: string, quantity: number): Promise<void> {
-    await Promise.resolve();
     this.#stock.set(sku, quantity);
+    await this.#reply();
   }
 
   async add(sku: string, quantity: number): Promise<void> {
     this.#stock.set(sku, (this.#stock.get(sku) ?? 0) + quantity);
-    await Promise.resolve();
+    await this.#reply();
   }
 
   async takeIfAvailable(sku: string, quantity: number): Promise<boolean> {
-    // No await between the check and the change: nothing else runs in between.
+    // The check and the change are one step: nothing else runs in between.
     const have = this.#stock.get(sku) ?? 0;
-    if (have < quantity) return false;
-    this.#stock.set(sku, have - quantity);
-    await Promise.resolve();
-    return true;
+    const taken = have >= quantity;
+    if (taken) this.#stock.set(sku, have - quantity);
+    await this.#reply();
+    return taken;
   }
 }
 

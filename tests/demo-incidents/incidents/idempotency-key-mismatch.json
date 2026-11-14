@@ -1,0 +1,30 @@
+{
+  "id": "idempotency-key-mismatch",
+  "title": "A repeated order request makes a second order",
+  "kind": "idempotency",
+  "severity": "high",
+  "difficulty": 2,
+  "rootCause": "createOrder stores an order's promise under the customer id and the idempotency key together, but looks an earlier request up by the bare key, so the lookup never finds anything and a repeated request makes a second order and takes the stock a second time. Both must use the same key.",
+  "edits": [
+    {
+      "file": "src/orders.ts",
+      "find": ["    const earlier = this.#byKey.get(key);"],
+      "replace": ["    const earlier = this.#byKey.get(request.idempotencyKey);"]
+    }
+  ],
+  "symptoms": {
+    "detector": "duplicate-orders",
+    "telemetry": "Pairs of order.created events with the same customerId and the same idempotencyKey, and a second set of inventory.reserved events for each pair. Every request gets a success status, and none says that it was a replay.",
+    "report": {
+      "channel": "support",
+      "text": "I was charged twice for the same mug. My phone lost signal while I was paying and the app tried again, and now I have two orders."
+    }
+  },
+  "witness": {
+    "failingTests": [
+      "orders.test.ts > answers the same request again with the same order, and makes no second one",
+      "orders.test.ts > makes one order when the same request arrives twice at once",
+      "server.test.ts > makes an order, and answers a repeat of it with the same one"
+    ]
+  }
+}
