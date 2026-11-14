@@ -7,7 +7,7 @@
 
 [ADR 0020](0020-escape-and-abuse-tests.md) found that runs under the hardened container share limits that the kernel counts for each user and not for each container. Three runs at once, each starting 50 `inotify` instances, on a host that allows 128 per user, got 128 between them, and some of the instances failed with "No file descriptors available". Every run was user 65534, and the container has no user namespace of its own, so the ids inside are the host's. One run could use up what every other run, and every other process of that user on the host, was allowed to have. The process limit does not do this: Docker's `--pids-limit` is for the container.
 
-That is a way for one run to starve the others, and the runs are the code of different customers. It is not an escape, and it is not the only thing that is counted per user, so closing it for `inotify` is not the claim. The claim is that no two runs are the same user to the kernel, whatever it counts.
+That is a way for one run to starve the others, and the runs are the code of different customers. It is not an escape, and it is not the only thing that is counted per user, so closing it for `inotify` is not the claim. The aim is that two runs are not the same user to the kernel, whatever it counts. The ids are drawn independently, so this holds by chance and not by construction: two runs at once can draw the same id (decision 4 gives the odds), and then they share those limits as every run did before.
 
 ## Decision
 
