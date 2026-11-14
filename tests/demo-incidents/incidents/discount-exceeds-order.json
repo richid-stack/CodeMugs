@@ -1,0 +1,29 @@
+{
+  "id": "discount-exceeds-order",
+  "title": "A discount code makes an order cost less than nothing",
+  "kind": "arithmetic",
+  "severity": "medium",
+  "difficulty": 1,
+  "rootCause": "A flat discount is taken off in full even when it is more than the order costs, so the amount that tax is worked out on is negative and the order total is negative. The discount should never be more than the subtotal.",
+  "edits": [
+    {
+      "file": "src/pricing.ts",
+      "find": ["        ? Math.min(discount.cents, subtotalCents)"],
+      "replace": ["        ? discount.cents"]
+    }
+  ],
+  "symptoms": {
+    "detector": "negative-total",
+    "telemetry": "order.created events whose totalCents is negative, with a discountCents that is more than the subtotalCents. The orders are accepted, and no error is raised.",
+    "report": {
+      "channel": "chat",
+      "text": "I used the welcome code on a single spoon and the total says minus 3.61. Does that mean you owe me money?"
+    }
+  },
+  "witness": {
+    "failingTests": [
+      "pricing.test.ts > holds for every small cart, code and country: whole numbers, a sum that adds up, never negative",
+      "pricing.test.ts > never takes off more than the order costs, so that the total is not negative"
+    ]
+  }
+}

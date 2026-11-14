@@ -81,7 +81,7 @@ describe("OrderService.createOrder", () => {
   });
 
   it("gives back what it took when a later line is out of stock", async () => {
-    const { orders, inventory } = testShop({ stock: { "MUG-01": 5, "POT-02": 0 } });
+    const { orders, inventory, telemetry } = testShop({ stock: { "MUG-01": 5, "POT-02": 0 } });
     const result = await orders.createOrder(
       request({
         lines: [
@@ -93,6 +93,15 @@ describe("OrderService.createOrder", () => {
     assert.deepEqual(result, { ok: false, reason: "out_of_stock", sku: "POT-02" });
     assert.equal(await inventory.available("MUG-01"), 5);
     assert.equal(orders.countOrders("cust_1"), 0);
+    // The shop says that it took the units and that it gave them back.
+    const stock = telemetry.events.filter((event) => event.type.startsWith("inventory.r"));
+    assert.deepEqual(
+      stock.map((event) => [event.type, event.attributes["sku"], event.attributes["quantity"]]),
+      [
+        ["inventory.reserved", "MUG-01", 2],
+        ["inventory.released", "MUG-01", 2],
+      ],
+    );
   });
 
   it("sells the last unit to one of two customers who ask for it together", async () => {

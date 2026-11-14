@@ -1,0 +1,43 @@
+{
+  "id": "oversell-race",
+  "title": "The last unit of a product is sold to two customers",
+  "kind": "concurrency",
+  "severity": "high",
+  "difficulty": 3,
+  "rootCause": "Inventory.reserve reads the stock level, checks it and writes it back as three separate steps with an await between each, so two requests that arrive together both read the same level and both succeed. The store has takeIfAvailable, which checks and takes in one step, and reserve should use it.",
+  "edits": [
+    {
+      "file": "src/inventory.ts",
+      "find": [
+        "  reserve(sku: string, quantity: number): Promise<boolean> {",
+        "    return this.#store.takeIfAvailable(sku, quantity);",
+        "  }"
+      ],
+      "replace": [
+        "  async reserve(sku: string, quantity: number): Promise<boolean> {",
+        "    const have = await this.#store.get(sku);",
+        "    if (have < quantity) return false;",
+        "    await this.#store.set(sku, have - quantity);",
+        "    return true;",
+        "  }"
+      ]
+    }
+  ],
+  "symptoms": {
+    "detector": "oversold-stock",
+    "telemetry": "One inventory.stocked event for POT-02 with one unit, and then inventory.reserved events (six, when six customers ask together) that take more units than that, with an order.created event for each. No error is raised and every request gets a success status.",
+    "report": {
+      "channel": "support",
+      "text": "I ordered the cast iron teapot and got a confirmation, and then an email saying it is out of stock and my order is cancelled. The page said it was in stock."
+    }
+  },
+  "witness": {
+    "failingTests": [
+      "inventory.test.ts > does not lose units that are put back while others are taken",
+      "inventory.test.ts > does not sell the same unit twice when requests arrive together",
+      "inventory.test.ts > sells no unit twice when ten ask together of a store that takes time to answer",
+      "orders.test.ts > never sells more of a product than there was, however many ask together",
+      "orders.test.ts > sells the last unit to one of two customers who ask for it together"
+    ]
+  }
+}

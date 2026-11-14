@@ -109,7 +109,13 @@ export class OrderService {
     for (const line of requested) {
       if (!(await this.#inventory.reserve(line.product.sku, line.quantity))) {
         // Give back what this order already took, so that a half-made order holds nothing.
-        for (const back of taken) await this.#inventory.release(back.product.sku, back.quantity);
+        for (const back of taken) {
+          await this.#inventory.release(back.product.sku, back.quantity);
+          this.#telemetry.emit("inventory.released", {
+            sku: back.product.sku,
+            quantity: back.quantity,
+          });
+        }
         return this.#reject("out_of_stock", line.product.sku);
       }
       taken.push(line);

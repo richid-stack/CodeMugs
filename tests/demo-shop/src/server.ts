@@ -130,12 +130,16 @@ export function createShopServer(options: ShopServerOptions): Server {
         return reply(route, 400, { error: "invalid_request", field: "pageSize" });
       }
       const customerId = listing[1];
-      return reply(route, 200, {
-        orders: orders.listOrders(customerId, page, pageSize).map(describeOrder),
+      const listed = orders.listOrders(customerId, page, pageSize);
+      const total = orders.countOrders(customerId);
+      telemetry.emit("orders.listed", {
+        customerId,
         page,
         pageSize,
-        total: orders.countOrders(customerId),
+        returned: listed.length,
+        total,
       });
+      return reply(route, 200, { orders: listed.map(describeOrder), page, pageSize, total });
     }
 
     return reply("unmatched", 404, { error: "not_found" });

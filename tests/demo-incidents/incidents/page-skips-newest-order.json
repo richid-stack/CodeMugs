@@ -1,0 +1,33 @@
+{
+  "id": "page-skips-newest-order",
+  "title": "A customer's newest order is missing from their order history",
+  "kind": "boundary",
+  "severity": "medium",
+  "difficulty": 1,
+  "rootCause": "listOrders starts each page one order late, at (page - 1) * pageSize + 1, so the newest order is never listed on any page and the last page is one order short. The first page should start at the first order.",
+  "edits": [
+    {
+      "file": "src/orders.ts",
+      "find": ["    const start = (page - 1) * pageSize;"],
+      "replace": ["    const start = (page - 1) * pageSize + 1;"]
+    }
+  ],
+  "symptoms": {
+    "detector": "pages-miss-orders",
+    "telemetry": "orders.listed events for a customer who read every page: the number of orders returned across the pages is one fewer than the total that the same events report. Every request succeeds, so nothing is raised and no status is wrong.",
+    "report": {
+      "channel": "chat",
+      "text": "I placed an order an hour ago and it is not in my order history. The older ones are all there."
+    }
+  },
+  "witness": {
+    "failingTests": [
+      "orders.test.ts > copes when the orders fill the pages exactly, and with a page of one",
+      "orders.test.ts > lists the newest first",
+      "orders.test.ts > shows every order exactly once across the pages",
+      "orders.test.ts > starts the first page at the newest order and ends the last page at the oldest",
+      "server.test.ts > lists a customer's orders in pages",
+      "server.test.ts > says what each listing returned, out of how many orders there are"
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "pickup-order-crash",
+  "title": "Orders collected in the shop fail with a server error",
+  "kind": "null-handling",
+  "severity": "high",
+  "difficulty": 1,
+  "rootCause": "createOrder reads request.address.country behind a non-null assertion, but an order that is collected in the shop has no address, so it throws a TypeError. The country should come from the address when there is one and be the shop's own country when there is not.",
+  "edits": [
+    {
+      "file": "src/orders.ts",
+      "find": ["    const country = request.address?.country ?? PICKUP_COUNTRY;"],
+      "replace": ["    const country = request.address!.country;"]
+    }
+  ],
+  "symptoms": {
+    "detector": "crashes-on-request",
+    "telemetry": "error.captured events with the name TypeError and a message about reading 'country' of undefined, on /orders, each with an http.request for POST /orders that has status 500. Orders that carry an address are not affected.",
+    "report": {
+      "channel": "support",
+      "text": "I tried to order a teapot to collect from the shop and checkout just says something went wrong. If I type in an address it works, but I do not want it delivered."
+    }
+  },
+  "witness": {
+    "failingTests": [
+      "orders.test.ts > takes an order that is collected in the shop, which has no address",
+      "server.test.ts > lists a customer's orders in pages",
+      "server.test.ts > lists ten at a time when no page size is asked for",
+      "server.test.ts > makes an order for collection, which has no address, taxed as the shop's own country",
+      "server.test.ts > says what each listing returned, out of how many orders there are",
+      "server.test.ts > writes one event for each request it served, with the route and how it went"
+    ]
+  }
+}
