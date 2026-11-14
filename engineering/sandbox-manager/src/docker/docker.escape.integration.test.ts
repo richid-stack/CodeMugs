@@ -188,7 +188,9 @@ for (const runtime of runtimes) {
         // files each. The user-id tests say the property that matters, and this one has no case.
         context.skip(`the host allows ${limit} inotify instances per user`);
       }
-      const script = `for i in $(seq 1 ${each}); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 6; echo "running=$(ps | grep -c '[i]notifyd') failed=$(cat /scratch/err* 2>/dev/null | grep -c .)"`;
+      // The processes are counted by their name and not by their command line, which the shell that
+      // runs this script has the program's name in too.
+      const script = `for i in $(seq 1 ${each}); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 6; echo "running=$(ps -o comm= | grep -c '^inotifyd$') failed=$(cat /scratch/err* 2>/dev/null | grep -c .)"`;
       const runs = await Promise.all(
         [1, 2, 3].map(() =>
           ws.sh(script, (policy) => {
@@ -198,8 +200,21 @@ for (const runtime of runtimes) {
           }),
         ),
       );
-      expect(runs.map((result) => result.stdout)).toEqual(
-        Array(3).fill(`running=${each} failed=0\n`),
+      // The whole of each result, so that a run that did not get as far as printing says why.
+      expect(
+        runs.map(({ outcome, exitCode, stdout, stderr }) => ({
+          outcome,
+          exitCode,
+          stdout,
+          stderr,
+        })),
+      ).toEqual(
+        Array(3).fill({
+          outcome: "exited",
+          exitCode: 0,
+          stdout: `running=${each} failed=0\n`,
+          stderr: "",
+        }),
       );
     });
 

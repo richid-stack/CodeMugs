@@ -7,6 +7,7 @@ import { validPolicyInput, type PolicyInput } from "../fixtures.js";
 import { SandboxRequestError } from "../policy.js";
 import { validateRunRequest, type SandboxRunRequest } from "../request.js";
 import { createDockerDriver, createGvisorDriver, type DockerDriverOptions } from "./driver.js";
+import { FIRST_RUN_ID, LAST_RUN_ID } from "./run-user.js";
 
 /**
  * A stand-in for the docker command, so that what the driver does with processes (waiting, killing,
@@ -234,6 +235,26 @@ describe("a run that ends by itself", () => {
       .map((call) => (call.args.find((arg) => arg.startsWith("--name=")) ?? "").slice(7));
     expect(new Set([a?.stdout, b?.stdout, c?.stdout]).size).toBe(3);
     expect(created.sort()).toEqual([a?.stdout, b?.stdout, c?.stdout].sort());
+  });
+
+  it("runs every run as a user of its own, the same in the user option and the scratch space", async () => {
+    const t = await setup();
+    await Promise.all([1, 2, 3, 4, 5, 6].map(() => t.driver.run(t.request())));
+    const creates = (await t.calls()).filter((call) => call.args[0] === "create");
+    expect(creates).toHaveLength(6);
+    const users = creates.map((call) => {
+      const user = call.args.find((arg) => arg.startsWith("--user=")) ?? "";
+      const [uid, gid] = user.slice(7).split(":");
+      const scratch = call.args.find((arg) => arg.startsWith("--tmpfs=/scratch")) ?? "";
+      expect(scratch).toContain(`uid=${uid},gid=${gid}`);
+      expect(gid).toBe(uid);
+      expect(Number(uid)).toBeGreaterThanOrEqual(FIRST_RUN_ID);
+      expect(Number(uid)).toBeLessThanOrEqual(LAST_RUN_ID);
+      return uid;
+    });
+    // Six draws from two hundred million: a repeat means that the id is not drawn for each run.
+    expect(new Set(users).size).toBe(6);
+    expect(creates.flatMap((call) => call.args).join(" ")).not.toContain("65534");
   });
 
   it("passes the command to docker as separate arguments, never through a shell", async () => {

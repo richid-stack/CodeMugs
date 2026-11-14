@@ -6,6 +6,7 @@ import type { PolicyInput } from "../fixtures.js";
 import { validateRunRequest } from "../request.js";
 import { createGvisorDriver } from "./driver.js";
 import { containersOf, limitedPolicy, runtimes, type Runtime } from "./integration.support.js";
+import { FIRST_RUN_ID, LAST_RUN_ID } from "./run-user.js";
 
 /**
  * These run real containers, so they need a docker daemon and an image that is already on the host,
@@ -123,10 +124,21 @@ for (const flavour of flavours) {
         },
       );
 
-      it("runs as a user that owns nothing, in a directory it can write", async () => {
-        const result = await sh("id -u; id -g; pwd");
-        expect(result).toMatchObject({ outcome: "exited", exitCode: 0 });
-        expect(result.stdout).toBe("65534\n65534\n/scratch\n");
+      it("runs as a user of its own that owns nothing and is in no other group, in a directory it can write", async () => {
+        const result = await sh(
+          "id -u; id -g; id -G; pwd; touch /scratch/mine; stat -c '%u:%g' /scratch /scratch/mine",
+        );
+        expect(result).toMatchObject({ outcome: "exited", exitCode: 0, stderr: "" });
+        const [uid, gid, groups, directory, scratch, file] = result.stdout.trimEnd().split("\n");
+        expect(Number(uid)).toBeGreaterThanOrEqual(FIRST_RUN_ID);
+        expect(Number(uid)).toBeLessThanOrEqual(LAST_RUN_ID);
+        expect(gid).toBe(uid);
+        // No supplementary group: not root's, and not any group of the image.
+        expect(groups).toBe(gid);
+        expect(directory).toBe("/scratch");
+        // The scratch space, and what is made in it, belong to that user and no other.
+        expect(scratch).toBe(`${uid}:${gid}`);
+        expect(file).toBe(`${uid}:${gid}`);
       });
 
       it("has no capabilities and cannot gain any", async () => {
@@ -305,6 +317,19 @@ for (const flavour of flavours) {
     });
 
     describe("runs that overlap", () => {
+      it("each have a user of their own", async () => {
+        // They sleep so that all of them are running while any of them is: one of them finishing
+        // before another starts could not show a shared user.
+        const results = await Promise.all([1, 2, 3, 4].map(() => sh("sleep 2; id -u")));
+        const users = results.map((result) => result.stdout.trim());
+        expect(results.every((result) => result.exitCode === 0)).toBe(true);
+        expect(new Set(users).size).toBe(4);
+        for (const user of users) {
+          expect(Number(user)).toBeGreaterThanOrEqual(FIRST_RUN_ID);
+          expect(Number(user)).toBeLessThanOrEqual(LAST_RUN_ID);
+        }
+      });
+
       it("do not see each other, and each is removed", async () => {
         const results = await Promise.all(
           [1, 2, 3, 4].map((n) =>

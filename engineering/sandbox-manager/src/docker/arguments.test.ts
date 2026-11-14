@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { changed, DIGEST, validPolicyInput } from "../fixtures.js";
 import { validateRunRequest, type SandboxRunRequest } from "../request.js";
 import { dockerCreateArguments, SANDBOX_LABEL } from "./arguments.js";
+import { FIRST_RUN_ID, LAST_RUN_ID, type RunUser } from "./run-user.js";
 
 const ROOT = "/var/lib/codemugs/work";
 const SOURCE = `${ROOT}/run-1/source`;
@@ -21,8 +22,10 @@ function request(
   );
 }
 
-const args = (r: SandboxRunRequest = request()) =>
-  dockerCreateArguments(r, "codemugs-sandbox-test");
+const USER: RunUser = { uid: 1_912_345_678, gid: 1_912_345_678 };
+
+const args = (r: SandboxRunRequest = request(), user: RunUser = USER) =>
+  dockerCreateArguments(r, "codemugs-sandbox-test", user);
 
 describe("the arguments of docker create", () => {
   it("are exactly these for the example policy", () => {
@@ -36,7 +39,7 @@ describe("the arguments of docker create", () => {
       "--read-only",
       "--cap-drop=ALL",
       "--security-opt=no-new-privileges",
-      "--user=65534:65534",
+      "--user=1912345678:1912345678",
       "--pids-limit=128",
       "--memory=512m",
       "--memory-swap=512m",
@@ -44,7 +47,7 @@ describe("the arguments of docker create", () => {
       "--ulimit=nofile=1024:1024",
       "--ulimit=core=0:0",
       "--log-driver=none",
-      "--tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=64m",
+      "--tmpfs=/scratch:rw,noexec,nosuid,nodev,mode=0700,uid=1912345678,gid=1912345678,size=64m",
       "--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m",
       "--shm-size=64m",
       `--mount=type=bind,src=${SOURCE},dst=/workspace,readonly`,
@@ -66,7 +69,7 @@ describe("the arguments of docker create", () => {
     expect(result).toContain("--memory-swap=2048m");
     expect(result).toContain("--pids-limit=7");
     expect(result).toContain(
-      "--tmpfs=/tmp-area:rw,noexec,nosuid,nodev,mode=0700,uid=65534,gid=65534,size=3m",
+      "--tmpfs=/tmp-area:rw,noexec,nosuid,nodev,mode=0700,uid=1912345678,gid=1912345678,size=3m",
     );
     expect(result).toContain("--workdir=/tmp-area");
   });
@@ -107,7 +110,7 @@ describe("the arguments of docker create", () => {
 
   it("ask for no runtime unless the driver has one, and then for that one, before the image", () => {
     expect(args().filter((arg) => arg.startsWith("--runtime"))).toEqual([]);
-    const result = dockerCreateArguments(request(), "codemugs-sandbox-test", "runsc");
+    const result = dockerCreateArguments(request(), "codemugs-sandbox-test", USER, "runsc");
     expect(result.filter((arg) => arg.startsWith("--runtime"))).toEqual(["--runtime=runsc"]);
     expect(result.indexOf("--runtime=runsc")).toBeLessThan(result.indexOf(IMAGE));
     // Everything else is the same, so that gVisor gets the same restrictions.
@@ -118,6 +121,7 @@ describe("the arguments of docker create", () => {
     const result = dockerCreateArguments(
       request({ command: ["tool", "--runtime=runc"] }),
       "codemugs-sandbox-test",
+      USER,
       "runsc",
     );
     expect(result.filter((arg) => arg.startsWith("--runtime"))).toEqual([
@@ -176,7 +180,7 @@ describe("the arguments of docker create", () => {
       /^--cgroupns=host/,
       /^--ipc=(?!private$)/,
       /^--security-opt=(?!no-new-privileges$)/,
-      /^--user=(?!65534:65534$)/,
+      /^--user=(?!1912345678:1912345678$)/,
       /^--oom-kill-disable/,
       /^--env/,
       /^-e$/,
@@ -218,7 +222,7 @@ describe("the arguments of docker create", () => {
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
-        "--user=65534:65534",
+        "--user=1912345678:1912345678",
         "--pull=never",
         "--log-driver=none",
       ]) {
@@ -237,10 +241,60 @@ describe("the arguments of docker create", () => {
   it("make the scratch space belong to the user the code runs as, and to nobody else", () => {
     const tmpfs = args().find((arg) => arg.startsWith("--tmpfs=")) ?? "";
     const options = tmpfs.split(":")[1]?.split(",") ?? [];
-    expect(options).toContain("uid=65534");
-    expect(options).toContain("gid=65534");
+    expect(options).toContain("uid=1912345678");
+    expect(options).toContain("gid=1912345678");
     expect(options).toContain("mode=0700");
-    expect(args()).toContain("--user=65534:65534");
+    expect(args()).toContain("--user=1912345678:1912345678");
+  });
+
+  it("run as the user that is given, in the user option and in the scratch space, and in no other", () => {
+    const other: RunUser = { uid: 2_000_000_001, gid: 2_000_000_002 };
+    const result = args(request(), other);
+    expect(result).toContain("--user=2000000001:2000000002");
+    const tmpfs = result.find((arg) => arg.startsWith("--tmpfs=/scratch")) ?? "";
+    expect(tmpfs.split(":")[1]?.split(",")).toEqual(
+      expect.arrayContaining(["uid=2000000001", "gid=2000000002"]),
+    );
+    // Nothing of the earlier user is left, and the two runs differ in nothing but the user.
+    expect(result.join(" ")).not.toContain("1912345678");
+    expect(result.join(" ")).not.toContain("65534");
+    const withoutIds = (list: string[]) => list.map((arg) => arg.replace(/\d{10}/g, "ID"));
+    expect(withoutIds(result)).toEqual(withoutIds(args()));
+  });
+
+  it("never run as root, or as a user that exists on the host, whatever the user it is given", () => {
+    const refused: RunUser[] = [
+      { uid: 0, gid: 0 },
+      { uid: 65_534, gid: 65_534 },
+      { uid: 1_000, gid: 1_000 },
+      { uid: USER.uid, gid: 0 },
+      { uid: 0, gid: USER.gid },
+      { uid: FIRST_RUN_ID - 1, gid: USER.gid },
+      { uid: USER.uid, gid: LAST_RUN_ID + 1 },
+      { uid: -1, gid: USER.gid },
+      { uid: 1.5, gid: USER.gid },
+      { uid: Number.NaN, gid: USER.gid },
+      { uid: Number.POSITIVE_INFINITY, gid: USER.gid },
+      { uid: USER.uid, gid: Number.NaN },
+      { uid: "1912345678;--privileged" as unknown as number, gid: USER.gid },
+    ];
+    for (const user of refused) {
+      expect(() => args(request(), user), JSON.stringify(user)).toThrow(/user is not one/);
+    }
+    // The ends of the range are users that are allowed.
+    for (const id of [FIRST_RUN_ID, LAST_RUN_ID]) {
+      expect(args(request(), { uid: id, gid: id })).toContain(`--user=${id}:${id}`);
+    }
+  });
+
+  it("say nothing of the ids in the refusal of a user", () => {
+    let message = "";
+    try {
+      args(request(), { uid: 4_242_424_242, gid: USER.gid });
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toBe("the run's user is not one that this driver hands out");
   });
 
   it("mount /tmp empty, read-only and unable to run programs, and only there", () => {
@@ -255,9 +309,12 @@ describe("the arguments of docker create", () => {
 
   it("mount /tmp the same way for every runtime, so that no runtime makes a writable one", () => {
     const without = args().filter((arg) => arg.includes("/tmp") || arg.startsWith("--shm"));
-    const withRuntime = dockerCreateArguments(request(), "codemugs-sandbox-test", "runsc").filter(
-      (arg) => arg.includes("/tmp") || arg.startsWith("--shm"),
-    );
+    const withRuntime = dockerCreateArguments(
+      request(),
+      "codemugs-sandbox-test",
+      USER,
+      "runsc",
+    ).filter((arg) => arg.includes("/tmp") || arg.startsWith("--shm"));
     expect(without).toEqual(["--tmpfs=/tmp:ro,noexec,nosuid,nodev,size=1m", "--shm-size=64m"]);
     expect(withRuntime).toEqual(without);
   });
@@ -280,17 +337,17 @@ describe("the arguments of docker create", () => {
   it("refuse a request whose source mount and directory do not agree", () => {
     const checked = request();
     const noDirectory = { ...checked, sourceDirectory: null } as unknown as SandboxRunRequest;
-    expect(() => dockerCreateArguments(noDirectory, "x")).toThrow(/not consistent/);
+    expect(() => dockerCreateArguments(noDirectory, "x", USER)).toThrow(/not consistent/);
     const noMount = request({
       policy: changed("mounts.source", undefined),
       sourceDirectory: undefined,
     });
     const extra = { ...noMount, sourceDirectory: SOURCE } as unknown as SandboxRunRequest;
-    expect(() => dockerCreateArguments(extra, "x")).toThrow(/not consistent/);
+    expect(() => dockerCreateArguments(extra, "x", USER)).toThrow(/not consistent/);
   });
 
   it("put the container name only in --name", () => {
-    const result = dockerCreateArguments(request(), "codemugs-sandbox-abc");
+    const result = dockerCreateArguments(request(), "codemugs-sandbox-abc", USER);
     expect(result.filter((arg) => arg.includes("codemugs-sandbox-abc"))).toEqual([
       "--name=codemugs-sandbox-abc",
     ]);
