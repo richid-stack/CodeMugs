@@ -29,20 +29,20 @@ stream.on("test:pass", (event) => {
   }
 });
 stream.on("test:fail", (event) => {
-  // A suite fails when a test in it fails, and that is already counted by the test. A suite whose
-  // own hook failed is not, and nothing else says so. A file that could not run reports itself as a
-  // test named for its path, which is the machine's path and not a name.
+  // Everything that fails is a failure, except what only says that something under it failed: a
+  // suite, or a test with tests in it, that fails because they did, which they are counted for.
+  // What is left is a hook of a suite, which is named for the suite; and a hook of a file, or a file
+  // that could not run, which Node reports under the path of the file, the machine's and not a name.
+  // A hook of a file has no kind in some versions of Node, so the kind is not what is looked at.
   const failureType = (event.details.error as { failureType?: string }).failureType;
-  const own =
-    event.details.type === "test" ||
-    (event.details.type === "suite" && failureType !== "subtestsFailed");
-  if (!own) return;
-  const ranToTheEnd = event.name !== event.file;
-  tests.push({
-    file: file(event.file),
-    name: ranToTheEnd ? event.name : "(the file did not run to its end)",
-    status: "failed",
-  });
+  if (failureType === "subtestsFailed") return;
+  const aboutTheFile = event.name === event.file;
+  const name = !aboutTheFile
+    ? event.name
+    : failureType === "hookFailed"
+      ? "(a hook of the file failed)"
+      : "(the file did not run to its end)";
+  tests.push({ file: file(event.file), name, status: "failed" });
 });
 // The runner only goes on while something reads the stream.
 for await (const ignored of stream) void ignored;

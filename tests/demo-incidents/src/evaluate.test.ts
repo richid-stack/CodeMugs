@@ -81,6 +81,40 @@ describe("running a copy of the shop", () => {
     ]);
   });
 
+  it("says that a file failed when a hook of the file failed, though every test in it passed", async () => {
+    await writeFile(
+      join(copy, "src", "hooks.test.ts"),
+      [
+        'import { after, it } from "node:test";',
+        'after(() => { throw new Error("hook broke"); });',
+        'it("passes", () => {});',
+        "",
+      ].join("\n"),
+    );
+    const found = (await runShopTests(copy)).filter((test) => test.file === "hooks.test.ts");
+    expect(found).toEqual([
+      { file: "hooks.test.ts", name: "(a hook of the file failed)", status: "failed" },
+      { file: "hooks.test.ts", name: "passes", status: "passed" },
+    ]);
+    expect((await evaluateShop(copy, 1)).failing).toEqual([
+      "hooks.test.ts > (a hook of the file failed)",
+    ]);
+  });
+
+  it("says that a file failed when its hook before the tests failed, and the tests with it", async () => {
+    await writeFile(
+      join(copy, "src", "before.test.ts"),
+      [
+        'import { before, it } from "node:test";',
+        'before(() => { throw new Error("hook broke"); });',
+        'it("would pass", () => {});',
+        "",
+      ].join("\n"),
+    );
+    const found = (await runShopTests(copy)).filter((test) => test.file === "before.test.ts");
+    expect(found).toEqual([{ file: "before.test.ts", name: "would pass", status: "failed" }]);
+  });
+
   it("says that a file failed when it could not run to its end, without the machine's path", async () => {
     await writeFile(join(copy, "src", "broken.test.ts"), 'throw new Error("broken at load");\n');
     const found = (await runShopTests(copy)).filter((test) => test.file === "broken.test.ts");
