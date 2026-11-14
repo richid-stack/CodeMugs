@@ -57,5 +57,5 @@ For the shop on `main`: every test passes and none is skipped, and no detector f
 ## Limits
 
 - The copy is run by plain Node with no environment and a time limit, outside the sandbox. It is the author's own code and the author's own tests; it is not a security boundary. The engine's work on a faulty copy goes through the sandbox (step 9).
-- `oversell-race` depends on timing: the shop's stock store takes 5 milliseconds to answer, and six customers ask for the last teapot together. It fired in every run when twelve ran at once on a machine with two processors. A slower host could miss it, and then the proof fails.
+- `oversell-race` needs six requests to overlap. The traffic does not leave that to timing: its stock store holds each read of the last teapot until all six customers have read it, or two seconds have passed. It gave the same result in 48 of 48 runs, twelve at once on a machine with two processors. A host slow enough to space the requests two seconds apart would show fewer units sold twice, or none, and the proof would fail.
 - The customer messages in the files are written by the author and are untrusted text, as every message is.

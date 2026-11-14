@@ -20,14 +20,20 @@ const shopModule = (await import(pathToFileURL(join(root, "src/shop.ts")).href))
     telemetry: unknown;
     clock: unknown;
     stock: Record<string, number>;
-    store: unknown;
+    store: StockStore;
   }): Shop;
 };
 const telemetryModule = (await import(pathToFileURL(join(root, "src/telemetry.ts")).href)) as {
   MemoryTelemetry: new (clock: unknown) => { events: unknown[] };
 };
+interface StockStore {
+  get(sku: string): Promise<number>;
+  set(sku: string, quantity: number): Promise<void>;
+  add(sku: string, quantity: number): Promise<void>;
+  takeIfAvailable(sku: string, quantity: number): Promise<boolean>;
+}
 const inventoryModule = (await import(pathToFileURL(join(root, "src/inventory.ts")).href)) as {
-  MemoryStockStore: new (initial: Record<string, number>, latencyMs: number) => unknown;
+  MemoryStockStore: new (initial: Record<string, number>) => StockStore;
 };
 
 /** Small, quick and the same every time: the same seed gives the same list of numbers. */
@@ -49,9 +55,37 @@ const clock = { now: () => new Date(Date.UTC(2026, 0, 15, 9, 0, 0) + 5 * reads++
 const telemetry = new telemetryModule.MemoryTelemetry(clock);
 // One teapot, so that customers who want it together cannot all have it.
 const stock = { "MUG-01": 80, "TEA-05": 200, "POT-02": 1, "SPN-09": 400, "BOK-03": 80 };
-// Stock lives in a database, and a call to it takes a few milliseconds to come back. That is the
-// time in which two requests that arrive together can both see the same level.
-const store = new inventoryModule.MemoryStockStore(stock, 5);
+
+// A shop that reads the stock level, checks it and then writes it as three steps sells the last
+// unit more than once only when requests overlap between the read and the write. Whether they do
+// would depend on how busy this machine is, so the store holds each read of the teapot, while the
+// burst below is going on, until all of the customers in it have read. A shop that checks and takes
+// in one step never reads, so this does nothing to it. If fewer arrive, the reads are let go after
+// a time, and the run goes on with what there is.
+const BURST = 6;
+const HOLD_MS = 2_000;
+const gate = { open: false, waiting: [] as (() => void)[] };
+function arrive(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    gate.waiting.push(resolve);
+    if (gate.waiting.length >= BURST) {
+      for (const release of gate.waiting.splice(0)) release();
+    } else {
+      setTimeout(resolve, HOLD_MS).unref();
+    }
+  });
+}
+const memory = new inventoryModule.MemoryStockStore(stock);
+const store: StockStore = {
+  async get(sku) {
+    const level = await memory.get(sku);
+    if (gate.open && sku === "POT-02") await arrive();
+    return level;
+  },
+  set: (sku, quantity) => memory.set(sku, quantity),
+  add: (sku, quantity) => memory.add(sku, quantity),
+  takeIfAvailable: (sku, quantity) => memory.takeIfAvailable(sku, quantity),
+};
 const { server } = shopModule.createShop({ telemetry, clock, stock, store });
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -122,15 +156,15 @@ for (let index = 0; index < 3; index++) {
   await Promise.all([order(body, `double-${index}`), order(body, `double-${index}`)]);
 }
 
-// The last teapot, wanted by six customers at the same moment. Each one asks while the others'
-// questions are still on their way to the stock, which is when a shop that checks and then takes
-// as two steps sells it more than once.
+// The last teapot, wanted by six customers at the same moment.
 const teapot = (customerId: string): OrderBody => ({
   customerId,
   lines: [{ sku: "POT-02", quantity: 1 }],
   address: { country: "FR" },
 });
-await Promise.all(["a", "b", "c", "d", "e", "f"].map((name) => order(teapot(`teapot-${name}`))));
+gate.open = true;
+await Promise.all(Array.from({ length: BURST }, (_, index) => order(teapot(`teapot-${index}`))));
+gate.open = false;
 
 // One customer who comes to the shop in person for a spoon with a welcome code, and one who orders
 // the spoon to be sent.

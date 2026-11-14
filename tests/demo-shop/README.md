@@ -51,6 +51,6 @@ PORT=3000 node tests/demo-shop/src/main.ts    # needs Node 22.18 or later
 
 None are in this directory. [`tests/demo-incidents`](../demo-incidents/README.md) holds a catalogue of labelled faults, each with the cause, the symptom in the telemetry, the tests that show it and the change that removes it ([ADR 0023](../../docs/architecture/decisions/0023-the-incident-catalogue.md)). It makes a faulty copy by applying one fault to a copy of this directory, and only that copy is given to the engine. It is kept apart so that the answers never travel with the code that the engine reads.
 
-## For the harness
+## For the tests of concurrency
 
-`createShop` takes an optional `store`, and `MemoryStockStore` takes an optional latency in milliseconds, which is how long each call takes to come back. It does what it is asked at once and then waits, as a call to a database does, so that requests that overlap in time can see the same level. With no latency a call only gives other work a turn. The harness that sends a copy its traffic uses 5 milliseconds.
+`createShop` takes an optional `store`, and `MemoryStockStore` takes an optional latency in milliseconds, which is how long each call takes to come back. It does what it is asked at once and then waits, as a call to a database does, so that requests that overlap in time can see the same level. The shop's own tests use it to check that ten orders for three units sell three. With no latency a call only gives other work a turn. The harness that sends a copy its traffic gives it a store of its own ([ADR 0023](../../docs/architecture/decisions/0023-the-incident-catalogue.md)).
