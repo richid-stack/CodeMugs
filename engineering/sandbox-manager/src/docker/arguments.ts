@@ -1,8 +1,5 @@
 import type { SandboxRunRequest } from "../request.js";
-
-/** `nobody` on the usual images: a user and a group that own nothing. */
-const UNPRIVILEGED_UID = 65534;
-const UNPRIVILEGED_GID = 65534;
+import { isRunUser, type RunUser } from "./run-user.js";
 
 /**
  * `/tmp` is mounted empty and read-only, whatever the runtime. gVisor would otherwise give the
@@ -23,7 +20,8 @@ export const SANDBOX_LABEL = "codemugs.sandbox=true";
  * defaults decide nothing that matters (they can differ between machines).
  *
  * - No network, no shared IPC, a read-only root filesystem, no capabilities and no way to gain
- *   any, and a user that owns nothing.
+ *   any, and a user that owns nothing and that no other run has (the run's own `user`, ADR 0021). It
+ *   is a parameter and not drawn here, so that this stays a pure function that a test can check.
  * - Memory, swap (none: the same value), processes, processors, open files and core files are
  *   limited, and the output is not kept by the daemon (it would fill the host's disk).
  * - The writable places are the scratch space, a size-limited memory filesystem that cannot hold
@@ -43,9 +41,14 @@ export const SANDBOX_LABEL = "codemugs.sandbox=true";
 export function dockerCreateArguments(
   request: SandboxRunRequest,
   containerName: string,
+  user: RunUser,
   runtime?: string,
 ): string[] {
   const { policy, command, sourceDirectory } = request;
+  if (!isRunUser(user)) {
+    // Not the ids themselves: it is a mistake of the caller, and the message names no value.
+    throw new Error("the run's user is not one that this driver hands out");
+  }
   if ((policy.mounts.source === undefined) !== (sourceDirectory === null)) {
     throw new Error("the request is not consistent: a source mount needs a source directory");
   }
@@ -63,7 +66,7 @@ export function dockerCreateArguments(
     "--read-only",
     "--cap-drop=ALL",
     "--security-opt=no-new-privileges",
-    `--user=${UNPRIVILEGED_UID}:${UNPRIVILEGED_GID}`,
+    `--user=${user.uid}:${user.gid}`,
     `--pids-limit=${limits.pids}`,
     `--memory=${memory}`,
     `--memory-swap=${memory}`,
@@ -71,7 +74,7 @@ export function dockerCreateArguments(
     "--ulimit=nofile=1024:1024",
     "--ulimit=core=0:0",
     "--log-driver=none",
-    `--tmpfs=${mounts.scratch.containerPath}:rw,noexec,nosuid,nodev,mode=0700,uid=${UNPRIVILEGED_UID},gid=${UNPRIVILEGED_GID},size=${mounts.scratch.sizeMb}m`,
+    `--tmpfs=${mounts.scratch.containerPath}:rw,noexec,nosuid,nodev,mode=0700,uid=${user.uid},gid=${user.gid},size=${mounts.scratch.sizeMb}m`,
     `--tmpfs=${READ_ONLY_TMP}:ro,noexec,nosuid,nodev,size=1m`,
     `--shm-size=${SHARED_MEMORY_MB}m`,
   ];

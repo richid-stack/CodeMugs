@@ -12,6 +12,7 @@ import {
   type SandboxResult,
 } from "../driver.js";
 import { dockerCreateArguments } from "./arguments.js";
+import { newRunUser } from "./run-user.js";
 
 export interface DockerDriverOptions {
   /**
@@ -346,7 +347,7 @@ function createContainerDriver(options: DockerDriverOptions, variant: Variant): 
       const name = `codemugs-sandbox-${randomUUID()}`;
 
       const created = await control(
-        dockerCreateArguments(request, name, variant.runtime),
+        dockerCreateArguments(request, name, newRunUser(), variant.runtime),
         CONTROL_TIMEOUT_MS,
       );
       if (created.code !== 0) {

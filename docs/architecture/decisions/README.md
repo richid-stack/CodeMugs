@@ -22,5 +22,6 @@
 | [0018](0018-gvisor-driver.md)                               | The gVisor driver: the same container under another kernel     | Accepted |
 | [0019](0019-pin-github-actions.md)                          | Every GitHub Action pinned to a commit, and a check that fails | Accepted |
 | [0020](0020-escape-and-abuse-tests.md)                      | Escape and abuse tests on both runtimes, from what was seen    | Accepted |
+| [0021](0021-a-user-id-of-its-own-for-each-run.md)           | A user and group id of its own for each run                    | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
