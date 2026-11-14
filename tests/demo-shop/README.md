@@ -2,7 +2,7 @@
 
 **Status:** Implemented · Step 6a of the [roadmap](../../docs/engineering/roadmap.md) · [ADR 0022](../../docs/architecture/decisions/0022-the-demo-application.md)
 
-A small order-taking application that stands in for a customer's. The platform will read it, watch it, and change it, so that every step has something real to work on. It is first-party code written for that purpose. It is **not** customer code, and it has **no faults on `main`**: the faults are seeded later, from a catalogue that is kept outside it (see below).
+A small order-taking application that stands in for a customer's. The platform will read it, watch it, and change it, so that every step has something real to work on. It is first-party code written for that purpose. It is **not** customer code, and it has **no faults on `main`**: the faults are put into copies of it, from a catalogue that is kept outside it (see below).
 
 ## What it does
 
@@ -21,20 +21,22 @@ A failure inside the shop tells the caller `{ "error": "internal_error" }` and n
 
 Events with a dot-separated lowercase `type`, an ISO 8601 `occurredAt` and some `attributes`, as one JSON object per line on standard output. They are the shape of the platform's [event envelope](../../packages/event-schemas/src/index.ts) without the parts that a gateway adds (the event id, the environment and the SDK).
 
-| `type`               | When                                                                  |
-| -------------------- | --------------------------------------------------------------------- |
-| `shop.started`       | The server is listening                                               |
-| `inventory.stocked`  | At start, once for each product, with its starting quantity           |
-| `inventory.reserved` | Units were taken for an order                                         |
-| `order.created`      | An order was made, with its totals and its idempotency key            |
-| `order.rejected`     | An order was refused, with the reason                                 |
-| `http.request`       | Every request served, with the route, the status and how long it took |
-| `error.captured`     | Something threw inside the shop, with the error's name and message    |
+| `type`               | When                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `shop.started`       | The server is listening                                                                                 |
+| `inventory.stocked`  | At start, once for each product, with its starting quantity                                             |
+| `inventory.reserved` | Units were taken for an order                                                                           |
+| `inventory.released` | Units an order had taken were given back, because the order did not go through                          |
+| `order.created`      | An order was made, with its totals and its idempotency key                                              |
+| `order.rejected`     | An order was refused, with the reason                                                                   |
+| `orders.listed`      | A customer's orders were listed: the page, the page size, how many came back, how many orders there are |
+| `http.request`       | Every request served, with the route, the status and how long it took                                   |
+| `error.captured`     | Something threw inside the shop, with the error's name and message                                      |
 
 ## Running it
 
 ```bash
-pnpm --filter @codemugs/demo-shop test        # 73 tests, by Node's own test runner
+pnpm --filter @codemugs/demo-shop test        # 78 tests, by Node's own test runner
 pnpm --filter @codemugs/demo-shop typecheck
 PORT=3000 node tests/demo-shop/src/main.ts    # needs Node 22.18 or later
 ```
@@ -47,4 +49,8 @@ PORT=3000 node tests/demo-shop/src/main.ts    # needs Node 22.18 or later
 
 ## The faults
 
-None are in this directory. A catalogue of labelled faults, each with the cause, the symptom in the telemetry, the test that shows it and the change that removes it, will live in `tests/demo-incidents` (step 6b, **not built yet**). It is kept apart so that the answers never travel with the code that the engine reads.
+None are in this directory. [`tests/demo-incidents`](../demo-incidents/README.md) holds a catalogue of labelled faults, each with the cause, the symptom in the telemetry, the tests that show it and the change that removes it ([ADR 0023](../../docs/architecture/decisions/0023-the-incident-catalogue.md)). It makes a faulty copy by applying one fault to a copy of this directory, and only that copy is given to the engine. It is kept apart so that the answers never travel with the code that the engine reads.
+
+## For the harness
+
+`createShop` takes an optional `store`, and `MemoryStockStore` takes an optional latency in milliseconds, which is how long each call takes to come back. It does what it is asked at once and then waits, as a call to a database does, so that requests that overlap in time can see the same level. With no latency a call only gives other work a turn. The harness that sends a copy its traffic uses 5 milliseconds.

@@ -163,6 +163,18 @@ describe("the shop over HTTP", () => {
     assert.equal((body["orders"] as unknown[]).length, 10);
   });
 
+  it("says what each listing returned, out of how many orders there are", async () => {
+    await call(base, "GET", "/customers/pager/orders?page=3&pageSize=5");
+    const event = shop.telemetry.events.findLast((e) => e.type === "orders.listed");
+    assert.deepEqual(event?.attributes, {
+      customerId: "pager",
+      page: 3,
+      pageSize: 5,
+      returned: 2,
+      total: 12,
+    });
+  });
+
   it("allows the last page number it supports, and refuses the next", async () => {
     const last = await call(base, "GET", "/customers/defaults/orders?page=1000000");
     assert.deepEqual(last.body["orders"], []);
