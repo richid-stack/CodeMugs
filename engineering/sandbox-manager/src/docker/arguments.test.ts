@@ -273,6 +273,8 @@ describe("the arguments of docker create", () => {
       { uid: USER.uid, gid: LAST_RUN_ID + 1 },
       { uid: -1, gid: USER.gid },
       { uid: 1.5, gid: USER.gid },
+      { uid: FIRST_RUN_ID + 0.5, gid: USER.gid },
+      { uid: USER.uid, gid: FIRST_RUN_ID + 0.5 },
       { uid: Number.NaN, gid: USER.gid },
       { uid: Number.POSITIVE_INFINITY, gid: USER.gid },
       { uid: USER.uid, gid: Number.NaN },

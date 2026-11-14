@@ -29,6 +29,9 @@ describe("the user of a run", () => {
   });
 
   it("is above the ranges that systemd documents for users, and below 2^31", () => {
+    // The range is a decision (ADR 0021), so the numbers are written out and a change shows here.
+    expect(FIRST_RUN_ID).toBe(1_900_000_000);
+    expect(LAST_RUN_ID).toBe(2_099_999_999);
     expect(FIRST_RUN_ID).toBeGreaterThan(1_879_048_191);
     expect(LAST_RUN_ID).toBeLessThan(2 ** 31);
     expect(FIRST_RUN_ID).toBeLessThan(LAST_RUN_ID);
@@ -49,7 +52,19 @@ describe("the user of a run", () => {
 
   it("is a user that isRunUser accepts, and isRunUser refuses what is outside the range", () => {
     expect(isRunUser({ uid: FIRST_RUN_ID, gid: LAST_RUN_ID })).toBe(true);
-    for (const id of [0, 1, 65_534, FIRST_RUN_ID - 1, LAST_RUN_ID + 1, 2 ** 31, 2 ** 32, -1, 1.5]) {
+    for (const id of [
+      0,
+      1,
+      65_534,
+      FIRST_RUN_ID - 1,
+      LAST_RUN_ID + 1,
+      2 ** 31,
+      2 ** 32,
+      -1,
+      1.5,
+      // In the range, and not a whole number.
+      FIRST_RUN_ID + 0.5,
+    ]) {
       expect(isRunUser({ uid: id, gid: FIRST_RUN_ID })).toBe(false);
       expect(isRunUser({ uid: FIRST_RUN_ID, gid: id })).toBe(false);
     }

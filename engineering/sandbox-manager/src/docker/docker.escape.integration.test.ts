@@ -194,7 +194,9 @@ for (const runtime of runtimes) {
       const runs = await Promise.all(
         [1, 2, 3].map(() =>
           ws.sh(script, (policy) => {
-            policy.limits.pids = each + 40;
+            // Under gVisor the limit counts the sandbox's own tasks as well, and a limit just above
+            // the number of programs stopped it at the start (ADR 0018, ADR 0020).
+            policy.limits.pids = 1_000;
             policy.limits.memoryMb = 512;
             policy.limits.wallClockSeconds = 60;
           }),
