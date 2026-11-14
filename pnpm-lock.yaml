@@ -155,6 +155,8 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  tests/demo-shop: {}
+
 packages:
 
   '@cacheable/memory@2.2.0':

@@ -22,6 +22,12 @@ export default defineConfig(
     },
   },
   {
+    // node:test's describe, it, before and after return promises that the test runner follows and
+    // that nothing is meant to await, so this rule would flag every one of them.
+    files: ["tests/demo-shop/**/*.test.ts"],
+    rules: { "@typescript-eslint/no-floating-promises": "off" },
+  },
+  {
     files: ["**/*.js", "**/*.mjs"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },
