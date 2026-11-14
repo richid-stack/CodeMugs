@@ -254,7 +254,9 @@ describe("a run that ends by itself", () => {
     });
     // Six draws from two hundred million: a repeat means that the id is not drawn for each run.
     expect(new Set(users).size).toBe(6);
-    expect(creates.flatMap((call) => call.args).join(" ")).not.toContain("65534");
+    // Nobody's id is not one of them. The range excludes it, and the ids are compared whole: a
+    // drawn id such as 1900065534 has 65534 in it, and is a perfectly good one.
+    expect(users).not.toContain("65534");
   });
 
   it("passes the command to docker as separate arguments, never through a shell", async () => {

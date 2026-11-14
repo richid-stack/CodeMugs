@@ -283,8 +283,9 @@ describe("the arguments of docker create", () => {
     for (const user of refused) {
       expect(() => args(request(), user), JSON.stringify(user)).toThrow(/user is not one/);
     }
-    // The ends of the range are users that are allowed.
-    for (const id of [FIRST_RUN_ID, LAST_RUN_ID]) {
+    // The ends of the range are users that are allowed, and so is an id that has nobody's in its
+    // digits: the ids are compared whole, not searched.
+    for (const id of [FIRST_RUN_ID, LAST_RUN_ID, 1_900_065_534]) {
       expect(args(request(), { uid: id, gid: id })).toContain(`--user=${id}:${id}`);
     }
   });
