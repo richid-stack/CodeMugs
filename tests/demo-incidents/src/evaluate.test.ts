@@ -57,6 +57,38 @@ describe("running a copy of the shop", () => {
     ]);
   });
 
+  it("says that a suite failed when its hook failed, and counts a suite once for a test that failed", async () => {
+    await writeFile(
+      join(copy, "src", "suites.test.ts"),
+      [
+        'import assert from "node:assert/strict";',
+        'import { after, describe, it } from "node:test";',
+        'describe("a suite with a hook that fails", () => {',
+        '  after(() => { throw new Error("hook broke"); });',
+        '  it("passes", () => {});',
+        "});",
+        'describe("a suite with a test that fails", () => {',
+        '  it("fails", () => assert.equal(1, 2));',
+        "});",
+        "",
+      ].join("\n"),
+    );
+    const found = (await runShopTests(copy)).filter((test) => test.file === "suites.test.ts");
+    expect(found).toEqual([
+      { file: "suites.test.ts", name: "a suite with a hook that fails", status: "failed" },
+      { file: "suites.test.ts", name: "fails", status: "failed" },
+      { file: "suites.test.ts", name: "passes", status: "passed" },
+    ]);
+  });
+
+  it("says that a file failed when it could not run to its end, without the machine's path", async () => {
+    await writeFile(join(copy, "src", "broken.test.ts"), 'throw new Error("broken at load");\n');
+    const found = (await runShopTests(copy)).filter((test) => test.file === "broken.test.ts");
+    expect(found).toEqual([
+      { file: "broken.test.ts", name: "(the file did not run to its end)", status: "failed" },
+    ]);
+  });
+
   it("runs with no environment, so that the copy sees nothing of this machine", async () => {
     process.env["DEMO_HARNESS_PROBE"] = "visible";
     try {

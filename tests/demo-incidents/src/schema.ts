@@ -22,11 +22,20 @@ const lines = z
   .array(z.string().refine((line) => !line.includes("\n"), { message: "one line to a string" }))
   .min(1);
 
+/**
+ * Lines that are some text once they are joined. An edit that finds nothing would match everywhere,
+ * and one that puts nothing could not be undone (the reference fix swaps the two). A deletion is an
+ * edit that finds a line with its neighbour and puts the neighbour back.
+ */
+const text = lines.refine((parts) => parts.join("\n") !== "", {
+  message: "the edit must have some text",
+});
+
 export const editSchema = z.strictObject({
   file: sourcePath,
   /** The text to change, which must be in the file exactly once. */
-  find: lines,
-  replace: lines,
+  find: text,
+  replace: text,
 });
 
 export const incidentSchema = z.strictObject({

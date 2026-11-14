@@ -139,6 +139,22 @@ describe("incidentSchema", () => {
     expect(incidentSchema.safeParse(with_(lineFeed)).success).toBe(false);
   });
 
+  it("refuses an edit that finds or puts no text, which could not be undone", () => {
+    const find = (copy: Record<string, unknown>): void => {
+      (copy["edits"] as { find: string[] }[])[0]!.find = [""];
+    };
+    expect(incidentSchema.safeParse(with_(find)).success).toBe(false);
+    const replace = (copy: Record<string, unknown>): void => {
+      (copy["edits"] as { replace: string[] }[])[0]!.replace = [""];
+    };
+    expect(incidentSchema.safeParse(with_(replace)).success).toBe(false);
+    // Two blank lines are text.
+    const blank = (copy: Record<string, unknown>): void => {
+      (copy["edits"] as { find: string[] }[])[0]!.find = ["", ""];
+    };
+    expect(incidentSchema.safeParse(with_(blank)).success).toBe(true);
+  });
+
   it("refuses an empty witness, and a witness test with no name", () => {
     const none = (copy: Record<string, unknown>): void => {
       (copy["witness"] as { failingTests: string[] }).failingTests = [];

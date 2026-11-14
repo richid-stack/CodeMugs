@@ -95,6 +95,18 @@ describe("applyEdits", () => {
     expect(await read("src/a.ts")).toBe("ba");
   });
 
+  it("refuses text of nothing, which is found everywhere, instead of searching for it for ever", async () => {
+    await write("src/a.ts", "one\n");
+    for (const bad of [edit([""], ["x"]), edit(["one"], [""]), edit([""], [""])]) {
+      await expect(applyEdits(directory, [bad])).rejects.toMatchObject({
+        name: "EditError",
+        code: "empty",
+        index: 0,
+      });
+    }
+    expect(await read("src/a.ts")).toBe("one\n");
+  });
+
   it("says unchanged when the edit would change nothing", async () => {
     await write("src/a.ts", "one\n");
     await expect(applyEdits(directory, [edit(["one"], ["one"])])).rejects.toMatchObject({
@@ -176,6 +188,32 @@ describe("treeHash", () => {
       await rm(first, { recursive: true, force: true });
       await rm(second, { recursive: true, force: true });
     }
+  });
+
+  it("does not let the content of one file imitate the records of two", async () => {
+    const first = await mkdtemp(join(tmpdir(), "edits-test-"));
+    const second = await mkdtemp(join(tmpdir(), "edits-test-"));
+    try {
+      await writeFile(join(first, "a"), "x\0b\0y");
+      await writeFile(join(second, "a"), "x");
+      await writeFile(join(second, "b"), "y");
+      expect(await treeHash(first)).not.toBe(await treeHash(second));
+      // The same with the separators of a text format, in case another were chosen.
+      await writeFile(join(first, "a"), 'x"\nb y');
+      expect(await treeHash(first)).not.toBe(await treeHash(second));
+    } finally {
+      await rm(first, { recursive: true, force: true });
+      await rm(second, { recursive: true, force: true });
+    }
+  });
+
+  it("gives the same hash for the same directory however its path is written", async () => {
+    await write("src/a.ts", "a");
+    await write("b.ts", "b");
+    const plain = await treeHash(directory);
+    expect(await treeHash(`${directory}/`)).toBe(plain);
+    expect(await treeHash(join(directory, "src", ".."))).toBe(plain);
+    expect(await treeHash(`${directory}//`)).toBe(plain);
   });
 
   it("does not mistake where a content ends and the next name begins", async () => {

@@ -46,7 +46,8 @@ describe("with a file system that lists names in the opposite order", () => {
       ["src/b.ts", "bee"],
       ["z", "zed"],
     ] as const) {
-      expected.update(`${name}\0${content}\0`);
+      const file = createHash("sha256").update(content).digest("hex");
+      expected.update(`${JSON.stringify(name)} ${file}\n`);
     }
     expect(await treeHash(directory)).toBe(expected.digest("hex"));
   });
