@@ -1,6 +1,6 @@
 # 0020. Escape and abuse tests on both runtimes: written from what was observed, with what got through written down
 
-- **Status:** Accepted
+- **Status:** Accepted. The shared user id it found is closed by [ADR 0021](0021-a-user-id-of-its-own-for-each-run.md).
 - **Date:** 2026-11-13
 
 ## Context
@@ -63,13 +63,13 @@ Everything writable is memory. Nothing a program writes reaches the host's disk,
 
 ### What a program can learn about the host (not closed)
 
-- **Under the hardened container,** `/proc/cpuinfo`, `/proc/meminfo` (the host's memory, not the limit), `/proc/version` (the host's kernel) and `/proc/sys/kernel/core_pattern` can be read. The last is a pipe to the host's core-dump handler. The container has no user namespace of its own (it is in the host's), so uid 65534 inside is the host's `nobody`.
+- **Under the hardened container,** `/proc/cpuinfo`, `/proc/meminfo` (the host's memory, not the limit), `/proc/version` (the host's kernel) and `/proc/sys/kernel/core_pattern` can be read. The last is a pipe to the host's core-dump handler. The container has no user namespace of its own (it is in the host's), so the uid inside is a uid of the host: `nobody` (65534) when this was probed, and an id of the run's own since [ADR 0021](0021-a-user-id-of-its-own-for-each-run.md).
 - **Under gVisor** the same files show gVisor's own values: its kernel version, and the memory limit as the memory.
 - **Under both,** `/etc/resolv.conf` is the host's: the address of its resolver and its cloud search domain, written by Docker even with no network. `--dns=127.0.0.1` replaces the address and keeps the search domain.
 
-### The limits that runs share under the hardened container (not closed)
+### The limits that runs share under the hardened container (closed by ADR 0021 for the user)
 
-Three runs at once, each starting 50 `inotify` instances, on a host that allows 128 per user: the three together got 128, and 6, 3 and 13 of the 50 failed with "No file descriptors available". Alone, one run got all 60 that it asked for. All runs use the same user id (65534), and the kernel counts several limits per user, not per container. One run can use up what every other run, and every other process of that user on the host, can have. The process limit does not do this, since Docker's `--pids-limit` is per container. The three runs under gVisor printed nothing in the probe, so it is not known whether it is the same there.
+Three runs at once, each starting 50 `inotify` instances, on a host that allows 128 per user: the three together got 128, and 6, 3 and 13 of the 50 failed with "No file descriptors available". Alone, one run got all 60 that it asked for. All runs used the same user id (65534), and the kernel counts several limits per user, not per container. [ADR 0021](0021-a-user-id-of-its-own-for-each-run.md) gives each run an id of its own and replays this case as a test, which passes in CI under both runtimes. One run can use up what every other run, and every other process of that user on the host, can have. The process limit does not do this, since Docker's `--pids-limit` is per container. The three runs under gVisor printed nothing in the probe, so it is not known whether it is the same there.
 
 ## Rejected alternatives
 
@@ -83,11 +83,11 @@ Three runs at once, each starting 50 `inotify` instances, on a host that allows 
 ## Not decided, or not done
 
 - **Release gate 8 stays not started.** These tests show that two runtimes refuse a list of calls and hold a few kinds of abuse on one runner. They do not show that a sandbox is enough for hostile code, and nothing may claim that they do.
-- **The user id is shared by all runs.** Each run should have its own, so that the per-user limits of the kernel are not shared and one run cannot starve the others. This is the next pull request, with the `inotify` case above as its regression test. The scratch space is owned by the same id and has to follow it.
+- **The user id was shared by all runs.** Done in [ADR 0021](0021-a-user-id-of-its-own-for-each-run.md): each run has an id of its own, and the `inotify` case above is its regression test.
 - **A crash under the hardened container may start the host's core handler.** The kernel passes a crash to the handler in `core_pattern` even when the core file limit is 0 (reasoned from how the kernel handles a piped pattern; not observed here). What the handler does with it was not looked at.
 - **gVisor ends the sandbox at the process limit** and the driver reports it as an exit with code 2. Whether a caller should be told it was the limit is not decided.
 - **The host details that a program can read** (the resolver, the kernel, `core_pattern`) are not closed. Closing them is a decision for the driver, and some of it (a resolver file of our own) is a change to what a sandbox mounts.
 - **gVisor's user namespaces** are allowed. A program inside one is still refused every mount that matters, but it is more of gVisor's code reached from inside the sandbox.
-- **No microVM driver exists.** Whether one is needed is for the owner and for gate 8, and after the next pull request.
+- **No microVM driver exists.** Whether one is needed is for the owner and for gate 8.
 - **One runner, one image, two releases.** A different host, kernel or gVisor platform may behave differently. The list of what gets through fails when a release changes it, which is the reason it is checked in rather than reasoned.
 - **The renewal of the pinned gVisor release, the image and the runner's versions** is by hand, and each renewal re-reads this list.
