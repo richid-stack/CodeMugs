@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -174,6 +174,33 @@ for (const runtime of runtimes) {
       expect(result.outcome).toBe("output_limit_exceeded");
       expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(100_000);
       expect(result.stdoutTruncated).toBe(true);
+    });
+
+    it("does not let runs at once use up what the kernel counts for each user", async (context) => {
+      // The kernel limits some things per user, not per container, and the host's numbers apply
+      // (ADR 0020, ADR 0021). Under runc, three runs of one user shared the limit on `inotify`
+      // instances, and the ones that came last failed. Here the runs ask for more than the host
+      // gives one user between them, and each for less than it gives one.
+      const limit = Number(await readFile("/proc/sys/fs/inotify/max_user_instances", "utf8"));
+      const each = Math.floor(limit / 2) + 1;
+      if (!(each >= 2 && each <= 300)) {
+        // A host that allows thousands cannot be run out of them by programs that may open 1024
+        // files each. The user-id tests say the property that matters, and this one has no case.
+        context.skip(`the host allows ${limit} inotify instances per user`);
+      }
+      const script = `for i in $(seq 1 ${each}); do inotifyd - /scratch:n >/dev/null 2>/scratch/err$i & done; sleep 6; echo "running=$(ps | grep -c '[i]notifyd') failed=$(cat /scratch/err* 2>/dev/null | grep -c .)"`;
+      const runs = await Promise.all(
+        [1, 2, 3].map(() =>
+          ws.sh(script, (policy) => {
+            policy.limits.pids = each + 40;
+            policy.limits.memoryMb = 512;
+            policy.limits.wallClockSeconds = 60;
+          }),
+        ),
+      );
+      expect(runs.map((result) => result.stdout)).toEqual(
+        Array(3).fill(`running=${each} failed=0\n`),
+      );
     });
 
     it("survives a fork bomb, and the next run is not harmed by it", async () => {
