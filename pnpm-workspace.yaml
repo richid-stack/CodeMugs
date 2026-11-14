@@ -5,6 +5,7 @@ packages:
   - "engineering/*"
   - "integrations/*"
   - "packages/*"
+  - "tests/*"
 
 # Dependency install scripts are a supply-chain risk, so they are denied by default. A new
 # package that wants to run one shows up as a warning during install and must be reviewed

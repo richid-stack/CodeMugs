@@ -55,7 +55,7 @@ Details: [architecture overview](docs/architecture/overview.md) and [decision re
 | `integrations/`   | Connectors to GitHub, OpenTelemetry, clouds, databases and other systems                        |
 | `packages/`       | Shared libraries: SDKs, model gateway, auth, security, storage, schemas, configuration          |
 | `infrastructure/` | Docker, database, messaging, observability, secrets, deployment                                 |
-| `tests/`          | Integration, end-to-end, security, performance, reliability and agent evaluations               |
+| `tests/`          | Integration, end-to-end, security, performance, reliability, agent evaluations, the demo app    |
 | `docs/`           | Architecture, security, engineering and operations documentation                                |
 
 ## Documentation
