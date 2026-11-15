@@ -65,6 +65,14 @@ jobs:
       - name: Every action is pinned to a commit
         run: pnpm check:workflows
       - run: pnpm install --frozen-lockfile
+      - name: PROBE node image digest (temporary)
+        run: |
+          for t in 22.23.4-alpine 22-alpine; do
+            echo "== $t"
+            docker buildx imagetools inspect "docker.io/library/node:$t" | head -14 || true
+            docker run --rm "docker.io/library/node:$t" node -v || true
+            docker image inspect --format '{{.Id}} {{.Size}} {{index .RepoDigests 0}}' "docker.io/library/node:$t" || true
+          done
       - name: Pull the sandbox test image
         run: docker pull "$CODEMUGS_TEST_SANDBOX_IMAGE"
       - name: Install gVisor
