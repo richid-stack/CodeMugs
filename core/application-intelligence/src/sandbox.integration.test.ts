@@ -221,6 +221,11 @@ for (const flavour of flavours) {
         memoryMb: 32,
       }).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(AnalysisError);
+      // Which of the two depends on whether the kernel's memory limit or Node's own check came first.
+      // The code is written to the log of the run, for whoever reads it.
+      process.stderr.write(
+        `[analysis-failure] ${flavour.name} memory 32 MB: ${(error as AnalysisError).code}\n`,
+      );
       expect(["analysis_out_of_memory", "analysis_failed"]).toContain(
         (error as AnalysisError).code,
       );

@@ -128,7 +128,7 @@ export async function analyserFiles(distribution: string): Promise<string[]> {
     seen.add(name);
     const text = await readFile(join(distribution, name), "utf8");
     for (const specifier of importsOf(text)) {
-      if (specifier.startsWith("./") && /^\.\/[A-Za-z0-9-]+\.js$/.test(specifier)) {
+      if (/^\.\/[A-Za-z0-9-]+\.js$/.test(specifier)) {
         pending.push(specifier.slice(2));
       } else if (specifier !== "typescript" && !specifier.startsWith("node:")) {
         throw new Error("the analyser imports something that is not staged");

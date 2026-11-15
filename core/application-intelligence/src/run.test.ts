@@ -355,6 +355,8 @@ describe("analyseInSandbox, how an ended run is read", () => {
       new SandboxError("cleanup_failed"),
       new SandboxError("source_not_allowed"),
       new Error("anything at all"),
+      // Only the sandbox manager's own error can say that the sandbox is not available.
+      Object.assign(new Error("a look-alike"), { code: "unavailable" }),
     ]) {
       expect((await code(failureOfTheDriver)).code).toBe("sandbox_failed");
     }

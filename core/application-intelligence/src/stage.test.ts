@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -273,6 +273,43 @@ describe("stageAnalysis", () => {
     }
   });
 
+  it("makes them readable when the process that stages them has a strict umask", async () => {
+    const { workspace, repository } = await setup({ "src/a.ts": "x" });
+    // A file that is too large is made another way, and has to be readable as well.
+    await writeFile(join(repository, "big.bin"), Buffer.alloc(ANALYSIS_LIMITS.maxFileBytes + 1));
+    const before = process.umask(0o077);
+    let staged: Awaited<ReturnType<typeof stageAnalysis>>;
+    try {
+      staged = await stageAnalysis({ repository, workspaceRoot: workspace });
+    } finally {
+      process.umask(before);
+    }
+    try {
+      for (const path of await everyPath(staged.directory)) {
+        const info = await lstat(join(staged.directory, path));
+        if (info.isSymbolicLink()) continue;
+        expect(info.mode & 0o777, path).toBe(info.isDirectory() ? 0o755 : 0o644);
+      }
+      expect((await stat(staged.directory)).mode & 0o777).toBe(0o755);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  it("gives a directory that is a plain absolute path, from a workspace that was given as a relative one", async () => {
+    const { workspace, repository } = await setup({ "a.ts": "x" });
+    const staged = await stageAnalysis({
+      repository,
+      workspaceRoot: relative(process.cwd(), workspace),
+    });
+    try {
+      expect(isAbsolute(staged.directory)).toBe(true);
+      expect(existsSync(join(staged.directory, STAGED_ENTRY))).toBe(true);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
   it("does not copy what is not a file of the repository", async () => {
     const { workspace, repository } = await setup({ "a.ts": "x" });
     await run("mkfifo", [join(repository, "pipe")]);
@@ -379,6 +416,19 @@ describe("stageAnalysis, when it cannot", () => {
     expect((error as AnalysisError).code).toBe("repository_too_large");
   });
 
+  it("accepts exactly as much content as the limit", async () => {
+    const { workspace, repository } = await setup({
+      "a.ts": "x".repeat(50),
+      "b.ts": "x".repeat(50),
+    });
+    const staged = await stageAnalysis({
+      repository,
+      workspaceRoot: workspace,
+      limits: { maxContentBytes: 100 },
+    });
+    await staged.cleanup();
+  });
+
   it("does not count a file that is not copied as content", async () => {
     const { workspace, repository } = await setup({ "a.ts": "x" });
     await writeFile(join(repository, "big.bin"), Buffer.alloc(ANALYSIS_LIMITS.maxFileBytes * 3));
@@ -421,6 +471,23 @@ describe("stageAnalysis, when it cannot", () => {
       limits: { maxEntries: STAGING_LIMITS.maxEntries * 10 },
     });
     await staged.cleanup();
+  });
+
+  it("takes no limit that is higher than its own: a limit that is asked to be higher is its own", async () => {
+    // A repository that is nested one directory deeper than the host's limit, with a request for a
+    // limit that would accept it.
+    const { error } = await refused(
+      { [`${"d/".repeat(STAGING_LIMITS.maxDepth + 1)}e.ts`]: "x" },
+      { maxDepth: STAGING_LIMITS.maxDepth * 10 },
+    );
+    expect((error as AnalysisError).code).toBe("repository_too_large");
+  });
+
+  it("takes a limit that is a whole number and not a fraction", async () => {
+    const { workspace, repository } = await setup({ "a.ts": "x" });
+    await expect(
+      stageAnalysis({ repository, workspaceRoot: workspace, limits: { maxEntries: 1.5 } }),
+    ).rejects.toThrow("whole number");
   });
 
   it("says nothing of the repository's names in what it throws", async () => {
