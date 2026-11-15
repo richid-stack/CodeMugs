@@ -1,16 +1,24 @@
 # application-intelligence
 
-**Status:** In progress · Phase 2 Understanding. The analyser (a library and a command) and the schema that checks its answer exist (step 7a). **It is not yet run in the sandbox (7b), its facts are not stored (7c) and there is no GitHub App (7d).** Until 7b, nothing runs it on customer code, and it must not be.
+**Status:** In progress · Phase 2 Understanding. The analyser (a library and a command), the schema that checks its answer (step 7a) and the host's way of running it in a sandbox (step 7b) exist. **Its facts are not stored (7c), there is no GitHub App (7d), and nothing yet calls it for a customer: it has been run in a real sandbox only over this repository, the demo shop and test repositories.** How much isolation a sandbox gives is the sandbox manager's to show, and release gate 8 is not started.
 
-Repository analysis: what a repository holds, as facts. The design is in [ADR 0024](../../docs/architecture/decisions/0024-repository-analysis.md).
+Repository analysis: what a repository holds, as facts. The design is in [ADR 0024](../../docs/architecture/decisions/0024-repository-analysis.md), and how it runs in a sandbox is in [ADR 0025](../../docs/architecture/decisions/0025-analysis-in-the-sandbox.md).
 
 ## What is here
 
-| Entry                                         | What it is                                                                                                                                                             | Who may use it                                                                                                         |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `@codemugs/application-intelligence`          | The constants, `repositoryFactsSchema`, `parseRepositoryFacts` (checks text that came out of the sandbox) and the types of facts                                       | The host                                                                                                               |
-| `@codemugs/application-intelligence/analyser` | `analyse(source)`, `directorySource(root)` and `memorySource(files)`                                                                                                   | **Only code that runs inside a sandbox** (invariant 8). The tests of this package run it on this repository's own code |
-| `dist/main.js <absolute path>`                | The command that the sandbox runs: one line of JSON on stdout and exit 0. Exit 2 for a path that is not absolute, exit 1 for any failure. It prints nothing on failure | The sandbox                                                                                                            |
+| Entry                                         | What it is                                                                                                                                                                                                                                          | Who may use it                                                                                                         |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `@codemugs/application-intelligence`          | The constants, `repositoryFactsSchema`, `parseRepositoryFacts` (checks text that came out of the sandbox), the types of facts, and `analyseInSandbox`, `stageAnalysis`, `AnalysisError` and `ANALYSIS_SANDBOX` (the way to run the analysis, below) | The host                                                                                                               |
+| `@codemugs/application-intelligence/analyser` | `analyse(source)`, `directorySource(root)` and `memorySource(files)`                                                                                                                                                                                | **Only code that runs inside a sandbox** (invariant 8). The tests of this package run it on this repository's own code |
+| `dist/main.js <absolute path>`                | The command that the sandbox runs: one line of JSON on stdout and exit 0. Exit 2 for a path that is not absolute, exit 1 for any failure. It prints nothing on failure                                                                              | The sandbox                                                                                                            |
+
+## Running it in a sandbox
+
+`analyseInSandbox({ driver, workspaceRoot, image, minimumIsolation, repository })` is the one way for the host to analyse a repository, and the only code that may call it for a customer's. It copies the analyser, the parser and the repository into a new directory (`tool/` and `repo/`), shows that directory read-only to a run with no network, parses the answer with the schema, and removes the directory. The caller chooses the driver, the image (pinned by digest) and the weakest isolation that it accepts, and **there is no default for that**. The limits of the run are written in `ANALYSIS_SANDBOX`.
+
+A failure is an `AnalysisError`, one of eleven short codes, each with a fixed sentence: nothing that the system, the sandbox or the repository said is ever in it. A repository that has a file or a directory that cannot be read is refused, not analysed in part. A working copy that could not be removed is `cleanup_failed`, and is reported even when something else failed first.
+
+What has been run: in CI, the analysis of the demo shop and of this repository in a hardened Docker container and in gVisor gives the same facts as the same analyser in this process, and a repository written to hurt it does too. What has not: a repository larger than this one, one with its dependencies installed (the sandbox has no network), and any measure of how much a sandbox isolates.
 
 ## What the facts hold
 
@@ -33,5 +41,7 @@ pnpm --filter @codemugs/application-intelligence build
 pnpm --filter @codemugs/application-intelligence test     # the command's tests need the build first
 node core/application-intelligence/dist/main.js "$PWD"    # the facts for this repository
 ```
+
+The tests in `sandbox.integration.test.ts` run the analysis in a real sandbox. They need a docker daemon and a Node image pinned by digest in `CODEMUGS_TEST_NODE_IMAGE` (CI sets it), and are skipped without them. With `REQUIRE_DOCKER_TESTS` and `REQUIRE_GVISOR_TESTS` set to `true` (CI does) a missing daemon, runtime or image is a failure and not a skip.
 
 The tests include an analysis of this repository and of the demo shop, the hostile cases (a file of nested brackets, names with control characters, a `package.json` with a token in a dependency), and checks that every answer passes the schema.

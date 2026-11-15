@@ -383,6 +383,31 @@ describe("stageAnalysis, when it cannot", () => {
     expect((await readdir(workspace)).filter((name) => name.startsWith("analysis-"))).toEqual([]);
   });
 
+  // As the superuser nothing is unreadable, so these two run in CI and as any other user.
+  it.skipIf(process.getuid?.() === 0)(
+    "refuses a repository with a directory or a file that cannot be read, and leaves nothing behind",
+    async () => {
+      for (const hidden of ["private", "ok.ts"]) {
+        const { workspace, repository } = await setup({
+          "private/a.ts": "x",
+          "ok.ts": "x",
+          "z.ts": "x",
+        });
+        await chmod(join(repository, hidden), 0o000);
+        try {
+          await expect(
+            stageAnalysis({ repository, workspaceRoot: workspace }),
+          ).rejects.toMatchObject({ code: "repository_unreadable" });
+          expect((await readdir(workspace)).filter((name) => name.startsWith("analysis-"))).toEqual(
+            [],
+          );
+        } finally {
+          await chmod(join(repository, hidden), 0o755);
+        }
+      }
+    },
+  );
+
   it("refuses a repository with more entries than the limit, and leaves nothing behind", async () => {
     const { error, workspace } = await refused(
       { "a.ts": "x", "b.ts": "x", "c.ts": "x" },

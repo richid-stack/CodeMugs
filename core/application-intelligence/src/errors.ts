@@ -24,7 +24,9 @@ export type AnalysisErrorCode =
   /** The analyser printed more than the sandbox allows. */
   | "analysis_output_too_large"
   /** The analyser's answer is not facts that the schema accepts. */
-  | "analysis_output_rejected";
+  | "analysis_output_rejected"
+  /** The host's working copy of the repository could not be removed, and is still on the disk. */
+  | "cleanup_failed";
 
 const MESSAGES: Record<AnalysisErrorCode, string> = {
   sandbox_unavailable: "the sandbox is not available",
@@ -37,6 +39,7 @@ const MESSAGES: Record<AnalysisErrorCode, string> = {
   analysis_out_of_memory: "the analysis ran out of memory",
   analysis_output_too_large: "the analysis printed more than is allowed",
   analysis_output_rejected: "the analysis did not give facts that the schema accepts",
+  cleanup_failed: "the working copy of the repository could not be removed",
 };
 
 export class AnalysisError extends Error {

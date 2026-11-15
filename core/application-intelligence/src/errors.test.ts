@@ -12,6 +12,7 @@ const CODES: readonly AnalysisErrorCode[] = [
   "analysis_out_of_memory",
   "analysis_output_too_large",
   "analysis_output_rejected",
+  "cleanup_failed",
 ];
 
 describe("AnalysisError", () => {

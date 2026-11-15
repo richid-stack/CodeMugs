@@ -4,7 +4,7 @@ import {
   mkdir,
   mkdtemp,
   open,
-  readdir,
+  opendir,
   readFile,
   rm,
   symlink,
@@ -76,13 +76,31 @@ export interface Staged {
 const DIRECTORY_MODE = 0o755;
 const FILE_MODE = 0o644;
 
-/** Copies the analyser, the parser and the repository into a new directory under the workspace. */
+/**
+ * Copies the analyser, the parser and the repository into a new directory under the workspace.
+ *
+ * It fails with an {@link AnalysisError} and with nothing else: a repository that cannot be read, or
+ * that is too large, says so, and any other failure (a disk that is full, a workspace that cannot be
+ * written) is `sandbox_failed`, without the text of the error that the system gave, which can name
+ * paths. A directory that could not be removed afterwards is `cleanup_failed`, and is reported even
+ * when something else went wrong first: it holds a copy of a customer's code and someone has to
+ * remove it.
+ */
 export async function stageAnalysis(options: StageOptions): Promise<Staged> {
   const limits = resolveStagingLimits(options.limits);
   const repository = resolve(options.repository);
-  const directory = await mkdtemp(join(resolve(options.workspaceRoot), "analysis-"));
+  let directory: string;
+  try {
+    directory = await mkdtemp(join(resolve(options.workspaceRoot), "analysis-"));
+  } catch {
+    throw new AnalysisError("sandbox_failed");
+  }
   const cleanup = async (): Promise<void> => {
-    await rm(directory, { recursive: true, force: true });
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } catch {
+      throw new AnalysisError("cleanup_failed");
+    }
   };
   try {
     // The run's user is drawn at random, owns nothing and reads the directory as "other".
@@ -91,7 +109,7 @@ export async function stageAnalysis(options: StageOptions): Promise<Staged> {
     await copyRepository(repository, join(directory, STAGED_REPOSITORY_DIRECTORY), limits);
   } catch (error) {
     await cleanup();
-    throw error;
+    throw error instanceof AnalysisError ? error : new AnalysisError("sandbox_failed");
   }
   return { directory, cleanup };
 }
@@ -199,6 +217,32 @@ async function copyRepository(
   await copyDirectory(source, destination, 0, budget, limits);
 }
 
+/**
+ * The entries of a directory, counted as they are read: a directory with more entries than the
+ * budget has left is refused before the rest of it is listed, and is never held whole in memory.
+ */
+async function listDirectory(
+  source: string,
+  budget: Budget,
+  limits: StagingLimits,
+): Promise<Dirent[]> {
+  const entries: Dirent[] = [];
+  try {
+    const directory = await opendir(source);
+    // The loop closes the directory when it ends and when it is left early.
+    for await (const entry of directory) {
+      budget.entries += 1;
+      if (budget.entries > limits.maxEntries) throw new AnalysisError("repository_too_large");
+      entries.push(entry);
+    }
+  } catch (error) {
+    // A directory that cannot be read is not left out: an answer for a part of a repository must
+    // not read as an answer for all of it.
+    throw error instanceof AnalysisError ? error : new AnalysisError("repository_unreadable");
+  }
+  return entries;
+}
+
 async function copyDirectory(
   source: string,
   destination: string,
@@ -206,19 +250,7 @@ async function copyDirectory(
   budget: Budget,
   limits: StagingLimits,
 ): Promise<void> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(source, { withFileTypes: true });
-  } catch {
-    // The root cannot be read at all. Below it, a directory that cannot be read is the
-    // repository's own state, and the copy is not the place to decide what that means.
-    if (depth === 0) throw new AnalysisError("repository_unreadable");
-    return;
-  }
-  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const entry of entries) {
-    budget.entries += 1;
-    if (budget.entries > limits.maxEntries) throw new AnalysisError("repository_too_large");
+  for (const entry of await listDirectory(source, budget, limits)) {
     const from = join(source, entry.name);
     const to = join(destination, entry.name);
     if (entry.isSymbolicLink()) {
@@ -251,10 +283,11 @@ async function copyFile(
     // O_NOFOLLOW: a path that was a file when the directory was read and a link now is not followed.
     handle = await open(from, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch {
-    return;
+    // A file that cannot be opened is not left out, for the reason that a directory is not.
+    throw new AnalysisError("repository_unreadable");
   }
   try {
-    const stat = await handle.stat();
+    const stat = await handle.stat().catch(unreadable);
     if (!stat.isFile()) return;
     if (stat.size > ANALYSIS_LIMITS.maxFileBytes) {
       // The analyser lists a file that is too large and does not read it, so only its size is
@@ -272,11 +305,15 @@ async function copyFile(
     if (budget.contentBytes > limits.maxContentBytes)
       throw new AnalysisError("repository_too_large");
     const content = Buffer.alloc(stat.size);
-    const { bytesRead } = await handle.read(content, 0, stat.size, 0);
+    const { bytesRead } = await handle.read(content, 0, stat.size, 0).catch(unreadable);
     await writeStaged(to, content.subarray(0, bytesRead));
   } finally {
     await handle.close();
   }
+}
+
+function unreadable(): never {
+  throw new AnalysisError("repository_unreadable");
 }
 
 async function makeDirectory(path: string): Promise<void> {
