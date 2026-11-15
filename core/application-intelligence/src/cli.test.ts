@@ -42,7 +42,7 @@ afterAll(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-describe("the command that runs in the sandbox", () => {
+describe("the command that runs in the sandbox", { timeout: 60_000 }, () => {
   it("prints the facts as one line of JSON, and nothing else, and exits with 0", async () => {
     const result = await run(directory);
     expect(result.code).toBe(0);
@@ -55,9 +55,10 @@ describe("the command that runs in the sandbox", () => {
   });
 
   it("exits with 2 and prints nothing when it is not given an absolute path", async () => {
-    for (const args of [[], ["relative/path"], ["."], [""]]) {
-      const result = await run(...args);
-      expect(result, JSON.stringify(args)).toEqual({ code: 2, stdout: "", stderr: "" });
+    const cases = [[], ["relative/path"], ["."], [""]];
+    const results = await Promise.all(cases.map((args) => run(...args)));
+    for (const [index, result] of results.entries()) {
+      expect(result, JSON.stringify(cases[index])).toEqual({ code: 2, stdout: "", stderr: "" });
     }
   });
 

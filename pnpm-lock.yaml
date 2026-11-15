@@ -109,6 +109,9 @@ importers:
 
   core/application-intelligence:
     dependencies:
+      '@codemugs/sandbox-manager':
+        specifier: workspace:*
+        version: link:../../engineering/sandbox-manager
       typescript:
         specifier: 6.0.3
         version: 6.0.3
