@@ -22,8 +22,10 @@ export { APP_ROLE, DISPATCHER_ROLE };
 // infrastructure/docker/compose.dev.yml. It is never used outside tests.
 const ROLE_PASSWORD = "codemugs_dev_only";
 
-// Serialises role and database creation between test files running in parallel.
-const SETUP_LOCK_KEY = 727_227_002;
+// Serialises role and database creation between test files running in parallel, and anything else
+// that changes a role that those files share: two changes to one role at once fail with "tuple
+// concurrently updated".
+export const SETUP_LOCK_KEY = 727_227_002;
 
 export function adminDatabaseUrl(): string | undefined {
   const url = process.env["CODEMUGS_TEST_DATABASE_URL"];

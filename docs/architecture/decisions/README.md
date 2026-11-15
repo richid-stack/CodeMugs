@@ -26,5 +26,6 @@
 | [0022](0022-the-demo-application.md)                        | The demo application, correct on main, its faults kept outside | Accepted |
 | [0023](0023-the-incident-catalogue.md)                      | The incident catalogue: exact-text faults, proven              | Accepted |
 | [0024](0024-repository-analysis.md)                         | Repository analysis: a parser in the sandbox, a checked answer | Accepted |
+| [0025](0025-analysis-in-the-sandbox.md)                     | The analysis in the sandbox: staged, bounded, checked on exit  | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

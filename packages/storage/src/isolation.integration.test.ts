@@ -8,6 +8,7 @@ import {
   APP_ROLE,
   createTestDatabase,
   DISPATCHER_ROLE,
+  SETUP_LOCK_KEY,
   type TestDatabase,
 } from "./testing/postgres.js";
 import { findSchemaViolations } from "./testing/schema-guard.js";
@@ -513,6 +514,11 @@ describeDatabase("the isolation checks themselves (canary)", () => {
     const alone = createPool({ connectionString: adminUrl, maxConnections: 1 });
     try {
       await alone.query("BEGIN");
+      // Other test files set these roles up, with an ALTER ROLE of their own, whenever they make a
+      // database, and two changes to one role at the same time fail with "tuple concurrently
+      // updated" (it failed this test in CI). Their setup holds this lock while it does that, so
+      // this takes it too, until the transaction ends.
+      await alone.query("SELECT pg_advisory_xact_lock($1)", [SETUP_LOCK_KEY]);
       await alone.query(`ALTER ROLE ${DISPATCHER_ROLE} BYPASSRLS CREATEDB`);
       await alone.query(`GRANT ${APP_ROLE} TO ${DISPATCHER_ROLE}`);
       await alone.query(`ALTER TABLE leaky OWNER TO ${APP_ROLE}`);
