@@ -16,7 +16,13 @@ const INTERNAL_TABLES: ReadonlySet<string> = new Set(["schema_migrations"]);
 const TENANT_ROOT_TABLES: ReadonlySet<string> = new Set(["organisations"]);
 
 /** Tables whose rows must never change once written. The application role may only insert. */
-const APPEND_ONLY_TABLES: ReadonlySet<string> = new Set(["audit_log", "events"]);
+const APPEND_ONLY_TABLES: ReadonlySet<string> = new Set([
+  "audit_log",
+  "events",
+  "analysis_runs",
+  "graph_nodes",
+  "graph_edges",
+]);
 
 /**
  * Tables whose rows may change but are never deleted by a runtime role. Deleting them for

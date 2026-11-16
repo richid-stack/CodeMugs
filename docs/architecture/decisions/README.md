@@ -27,5 +27,6 @@
 | [0023](0023-the-incident-catalogue.md)                      | The incident catalogue: exact-text faults, proven              | Accepted |
 | [0024](0024-repository-analysis.md)                         | Repository analysis: a parser in the sandbox, a checked answer | Accepted |
 | [0025](0025-analysis-in-the-sandbox.md)                     | The analysis in the sandbox: staged, bounded, checked on exit  | Accepted |
+| [0026](0026-system-graph-storage.md)                        | The system graph in Postgres: immutable runs, per tenant       | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

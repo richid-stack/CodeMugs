@@ -119,6 +119,22 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  core/system-graph:
+    dependencies:
+      '@codemugs/application-intelligence':
+        specifier: workspace:*
+        version: link:../application-intelligence
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+
   engineering/sandbox-manager:
     dependencies:
       zod:

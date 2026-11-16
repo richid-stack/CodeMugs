@@ -2,7 +2,7 @@
 
 Tenant-scoped access to the primary PostgreSQL database, and its migrations.
 
-**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first seven tables (organisations, projects, API keys, the audit log, events, jobs and event aggregates). Object storage and the cache do not exist yet.
+**Status:** Phase 1 · Foundation (started). The database part exists: migrations, a connection pool, tenant-scoped transactions and the first ten tables (organisations, projects, API keys, the audit log, events, jobs, event aggregates, and the analysis runs, graph nodes and graph edges of the system graph). Object storage and the cache do not exist yet.
 
 Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md) (tenant isolation) and [ADR 0009](../../docs/architecture/decisions/0009-data-access-and-migrations.md) (data access, versions, migrations).
 
@@ -14,7 +14,7 @@ Decisions: [ADR 0006](../../docs/architecture/decisions/0006-tenant-isolation.md
 - `loadMigrations()`: reads and validates the files without touching a database.
 - `postgresErrorCode(error)`: the SQLSTATE of a database error, so callers map specific failures without matching message text.
 - `@codemugs/storage/testing`: the test harness and schema guard, for **test files only** (a database per test file, the two restricted roles, and a check of every table against the tenancy rules and the dispatcher rules). Other packages with database tests use it.
-- Tables so far: `organisations`, `projects`, `api_keys`, `audit_log`, `events`, `jobs` and `event_aggregates`. `api_keys` and `audit_log` are used by [`@codemugs/auth`](../auth/README.md) ([ADR 0010](../../docs/architecture/decisions/0010-api-keys-and-audit-log.md)), `events` by [`@codemugs/ingestion`](../../apps/ingestion/README.md) ([ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md)), `jobs` by [`@codemugs/jobs`](../jobs/README.md) ([ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)), and `event_aggregates` by the handler in [`@codemugs/ingestion`](../../apps/ingestion/README.md) ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md)).
+- Tables so far: `organisations`, `projects`, `api_keys`, `audit_log`, `events`, `jobs`, `event_aggregates`, `analysis_runs`, `graph_nodes` and `graph_edges`. `api_keys` and `audit_log` are used by [`@codemugs/auth`](../auth/README.md) ([ADR 0010](../../docs/architecture/decisions/0010-api-keys-and-audit-log.md)), `events` by [`@codemugs/ingestion`](../../apps/ingestion/README.md) ([ADR 0011](../../docs/architecture/decisions/0011-event-ingestion.md)), `jobs` by [`@codemugs/jobs`](../jobs/README.md) ([ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)), and `event_aggregates` by the handler in [`@codemugs/ingestion`](../../apps/ingestion/README.md) ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md)). `analysis_runs`, `graph_nodes` and `graph_edges` are used by [`@codemugs/system-graph`](../../core/system-graph/README.md) ([ADR 0026](../../docs/architecture/decisions/0026-system-graph-storage.md)); the application can insert and read them and cannot update or delete.
 
 ```ts
 const pool = createPool({ connectionString: applicationDatabaseUrl });
