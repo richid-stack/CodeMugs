@@ -1,6 +1,6 @@
 # Data model overview (draft)
 
-> **Draft.** Only the tenancy, identity and event foundation exists as a schema: `organisations`, `projects`, `api_keys`, `audit_log`, `events`, `jobs` and `event_aggregates`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
+> **Draft.** Only the tenancy, identity, event and repository-graph foundation exists as a schema: `organisations`, `projects`, `api_keys`, `audit_log`, `events`, `jobs`, `event_aggregates`, `analysis_runs`, `graph_nodes` and `graph_edges`, in [`packages/storage/migrations`](../../packages/storage/migrations). Everything else below is planned. This establishes the groupings and the rules every table must follow. Field-level design happens table by table.
 
 ## Rules for every table
 
@@ -12,6 +12,7 @@
 - **Events are immutable.** `events` allows the application to insert and read only. The primary key `(organisation_id, project_id, event_id)` is the idempotency key ([ADR 0011](../architecture/decisions/0011-event-ingestion.md)).
 - **Jobs are pointers, never data.** `jobs` holds a job's kind, the id of the tenant row it is about and its progress, and has no payload column, so a worker role that can see every tenant's jobs learns nothing it can misuse. That role (`codemugs_dispatcher`) can read and advance `jobs` and cannot touch any other table ([ADR 0012](../architecture/decisions/0012-jobs-and-cross-tenant-claiming.md)). Jobs are kept, not deleted; retention is release gate 15.
 - **Derived counts are recomputed, never added to.** `event_aggregates` holds the number of events per project and UTC hour, written by a job that counts the events themselves and replaces the stored number, so a retry, a replay or a crash cannot count anything twice. The application can read, insert and change only the count, and cannot delete ([ADR 0013](../architecture/decisions/0013-event-processing.md)). Events carry the id of the batch they arrived in (`batch_id`), which is what the job points at.
+- **A repository's graph is a snapshot, and a snapshot is never changed.** `analysis_runs` holds one analysis of one project, and `graph_nodes` and `graph_edges` hold what it found (files, packages, routes, environment variable names, imports), written in one transaction with the run, so a run that can be read is whole. The application can insert and read them and cannot update or delete; a newer analysis is a new run, and the latest run of a project is the graph now. Every key and foreign key carries `organisation_id`, so a node or an edge cannot point into another tenant's run. The run's id, chosen by the caller, is the idempotency key. A run of the largest size is about 30 MB, and there is no deletion path yet (release gate 15) ([ADR 0026](../architecture/decisions/0026-system-graph-storage.md)).
 - **High-volume telemetry does not live in the primary database for long.** See [ADR 0005](../architecture/decisions/0005-modular-monolith-and-postgres-first-storage.md).
 
 ## Entity groups
@@ -36,5 +37,7 @@ Every memory entry carries: source, timestamp, project association, confidence, 
 Entities named in the architecture: application, service, endpoint, database, table, function, dependency, deployment, incident, user feedback, code change.
 
 Relationships: calls, depends on, writes to, reads from, implements, introduced by, affected by, correlates with, owned by.
+
+**Built so far:** the part that comes from a repository (files, packages, modules, routes, environment variables and frameworks, with imports, dependencies and definitions), as `analysis_runs`, `graph_nodes` and `graph_edges`. The rest (services, tables, deployments, incidents, ownership) comes from the runtime and is planned.
 
 Represented as relational tables with graph-oriented relationships first. A dedicated graph store is considered only when measured query needs justify it.

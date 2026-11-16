@@ -1,6 +1,6 @@
 # application-intelligence
 
-**Status:** In progress · Phase 2 Understanding. The analyser (a library and a command), the schema that checks its answer (step 7a) and the host's way of running it in a sandbox (step 7b) exist. **Its facts are not stored (7c), there is no GitHub App (7d), and nothing yet calls it for a customer: it has been run in a real sandbox only over this repository, the demo shop and test repositories.** How much isolation a sandbox gives is the sandbox manager's to show, and release gate 8 is not started.
+**Status:** In progress · Phase 2 Understanding. The analyser (a library and a command), the schema that checks its answer (step 7a) and the host's way of running it in a sandbox (step 7b) exist. **Its facts can be stored by [`@codemugs/system-graph`](../system-graph/README.md) (7c) but nothing does so yet, there is no GitHub App (7d), and nothing yet calls it for a customer: it has been run in a real sandbox only over this repository, the demo shop and test repositories.** How much isolation a sandbox gives is the sandbox manager's to show, and release gate 8 is not started.
 
 Repository analysis: what a repository holds, as facts. The design is in [ADR 0024](../../docs/architecture/decisions/0024-repository-analysis.md), and how it runs in a sandbox is in [ADR 0025](../../docs/architecture/decisions/0025-analysis-in-the-sandbox.md).
 
