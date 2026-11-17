@@ -1,6 +1,6 @@
 # The GitHub App and its private key
 
-**Status:** Draft. The steps below come from GitHub's documentation and from how the check is built. Nobody has run them against the live app yet, and the names of menus may have changed. [ADR 0027](../architecture/decisions/0027-github-app-read-only.md) is the decision.
+**Status:** Draft. The check below was run against the live app once (2026-11-17) and every line passed. The steps for changing and revoking the key come from GitHub's documentation and have not been run, and the names of menus may have changed. [ADR 0027](../architecture/decisions/0027-github-app-read-only.md) is the decision.
 
 ## What it is
 
