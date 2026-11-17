@@ -55,4 +55,8 @@ Public means anyone can read the code and the documents, including the architect
 
 ## Secrets
 
-None are needed yet. When they are, use environment-scoped secrets, never repository-wide secrets for production.
+One, in an **environment** and not repository-wide:
+
+- [ ] The environment **`github-app`**, with deployment branches limited to `main`, holds the secret `CODEMUGS_GITHUB_APP_PRIVATE_KEY`: the private key of the CodeMugs Reader GitHub App, the contents of its `.pem` file. It is read by one workflow, [GitHub App check](../../.github/workflows/github-app-check.yml), in one step. See [the runbook](../operations/github-app-key.md) for how to check it and how to change it. A client secret is not this key.
+
+Any other secret goes the same way: environment-scoped, never repository-wide for production.
