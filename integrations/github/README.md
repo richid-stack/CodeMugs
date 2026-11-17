@@ -22,7 +22,7 @@ Everything that GitHub says is data (invariant 2): each answer is read to at mos
 - **Extracting the archive.** The download gives bytes. Reading an archive that a customer controls needs its own bounded, hostile-input-tested reader, and runs where customer code may run (invariant 8). That is 7d-2, and it will connect fetching, extracting, staging and the analysis ([ADR 0025](../../docs/architecture/decisions/0025-analysis-in-the-sandbox.md)).
 - **Anything that calls it for a customer.** The check is the only caller.
 - **Webhooks, pull requests and any permission to write.** The app has none, and writing is a separate decision with a separate permission, never a widening of this one.
-- **More than one run against a live GitHub.** The tests run against a fake GitHub on this machine, and the check has been run from `main` against GitHub itself once (2026-11-17), when every line passed ([ADR 0027](../../docs/architecture/decisions/0027-github-app-read-only.md)). Only this repository, which is public, has been read.
+- **Any live check beyond this one public repository.** The tests run against a fake GitHub on this machine, and the check has been run from `main` against GitHub itself twice (2026-11-17, once before and once after the review fixes), and every line passed both times ([ADR 0027](../../docs/architecture/decisions/0027-github-app-read-only.md)). Only this repository, which is public, has been read.
 
 ## Testing
 
