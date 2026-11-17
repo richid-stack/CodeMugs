@@ -12,7 +12,6 @@ export {
   type InstallationToken,
   type Permissions,
   type RepositoryInfo,
-  type TokenScope,
 } from "./client.js";
 export { DEFAULT_API_URL, DEFAULT_API_VERSION, DEFAULT_DOWNLOAD_HOSTS } from "./transport.js";
 export {

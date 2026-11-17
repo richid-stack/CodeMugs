@@ -38,12 +38,7 @@ const appFor = (server: FakeGitHub, extra: Record<string, unknown> = {}): GitHub
   );
 
 const readerFor = async (app: GitHubApp): Promise<InstallationClient> =>
-  app.forInstallation(
-    await app.createInstallationToken(INSTALLATION_ID, {
-      repositories: [REPOSITORY],
-      permissions: { contents: "read" },
-    }),
-  );
+  app.forInstallation(await app.createInstallationToken(INSTALLATION_ID, REPOSITORY));
 
 const failure = async (work: () => Promise<unknown>): Promise<GitHubError> => {
   try {
@@ -158,10 +153,7 @@ describe("the address of the API", () => {
 describe("a token for an installation", () => {
   it("is asked for one repository and one permission, and no more", async () => {
     const server = await start();
-    const token = await appFor(server).createInstallationToken(INSTALLATION_ID, {
-      repositories: [REPOSITORY],
-      permissions: { contents: "read" },
-    });
+    const token = await appFor(server).createInstallationToken(INSTALLATION_ID, REPOSITORY);
     const request = server.requests[0];
     expect(request?.method).toBe("POST");
     expect(request?.path).toBe(`/app/installations/${String(INSTALLATION_ID)}/access_tokens`);
@@ -178,10 +170,7 @@ describe("a token for an installation", () => {
 
   it("is a secret that cannot be printed by accident", async () => {
     const server = await start();
-    const token = await appFor(server).createInstallationToken(INSTALLATION_ID, {
-      repositories: [REPOSITORY],
-      permissions: { contents: "read" },
-    });
+    const token = await appFor(server).createInstallationToken(INSTALLATION_ID, REPOSITORY);
     expect(token.token.reveal()).toBe(INSTALLATION_TOKEN);
     for (const shown of [
       JSON.stringify(token),
@@ -193,23 +182,53 @@ describe("a token for an installation", () => {
   });
 
   it.each([
-    ["no repository", { repositories: [], permissions: { contents: "read" as const } }],
-    ["no permission", { repositories: [REPOSITORY], permissions: {} }],
-    [
-      "a repository that is a path",
-      { repositories: ["../other"], permissions: { contents: "read" as const } },
-    ],
-    [
-      "a repository with a slash",
-      { repositories: ["a/b"], permissions: { contents: "read" as const } },
-    ],
-  ])("is not asked for with %s", async (_name, scope) => {
+    ["a repository that is a path", "../other"],
+    ["a repository with a slash", "a/b"],
+    ["a repository that is empty", ""],
+    ["a repository that is a dot", ".."],
+  ])("is not asked for with %s", async (_name, name) => {
     const server = await start();
     const error = await failure(() =>
-      appFor(server).createInstallationToken(INSTALLATION_ID, scope),
+      appFor(server).createInstallationToken(INSTALLATION_ID, name),
     );
     expect(error.code).toBe("invalid_input");
     expect(server.requests).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      "a scope that names two repositories",
+      { repositories: [REPOSITORY, "other"], permissions: { contents: "read" } },
+    ],
+    [
+      "a scope with another permission",
+      { repositories: [REPOSITORY], permissions: { issues: "read" } },
+    ],
+    [
+      "a scope with a permission to write",
+      { repositories: [REPOSITORY], permissions: { contents: "write" } },
+    ],
+    ["a list of repositories", [REPOSITORY]],
+    ["a list of two", [REPOSITORY, "other"]],
+    ["nothing", undefined],
+    ["a number", 5],
+  ])("cannot be widened by a caller that passes %s", async (_name, value) => {
+    // The type does not allow it, and a caller of plain JavaScript does not have the type.
+    const server = await start();
+    const error = await failure(() =>
+      appFor(server).createInstallationToken(INSTALLATION_ID, value as never),
+    );
+    expect(error.code).toBe("invalid_input");
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("always asks for exactly one repository and the permission to read contents", async () => {
+    const server = await start();
+    await appFor(server).createInstallationToken(INSTALLATION_ID, REPOSITORY);
+    expect(JSON.parse(server.requests[0]?.body ?? "")).toEqual({
+      repositories: [REPOSITORY],
+      permissions: { contents: "read" },
+    });
   });
 
   it.each([
@@ -267,10 +286,7 @@ describe("a token for an installation", () => {
       },
     });
     const error = await failure(() =>
-      appFor(server).createInstallationToken(INSTALLATION_ID, {
-        repositories: [REPOSITORY],
-        permissions: { contents: "read" },
-      }),
+      appFor(server).createInstallationToken(INSTALLATION_ID, REPOSITORY),
     );
     expect(error.code).toBe("response_rejected");
   });
@@ -493,6 +509,10 @@ describe("reading a repository with a token", () => {
     ["an owner that is too long", "a".repeat(40), REPOSITORY],
     ["an owner that is empty", "", REPOSITORY],
     ["an owner with a slash", "a/b", REPOSITORY],
+    ["an owner that is a number", 5 as never, REPOSITORY],
+    ["an owner that is a list", ["acme-owner"] as never, REPOSITORY],
+    ["a repository that is a number", OWNER, 5 as never],
+    ["a repository that is a list", OWNER, ["widgets"] as never],
     ["a repository that is ..", OWNER, ".."],
     ["a repository that is .", OWNER, "."],
     ["a repository with a slash", OWNER, "a/b"],
@@ -516,16 +536,35 @@ describe("reading a repository with a token", () => {
   it.each([
     ["a reference with ..", "../../other"],
     ["a reference that is only ..", ".."],
+    ["a reference with .. inside a part", "a..b"],
     ["a reference with a . part", "a/./b"],
+    ["a reference with a part that starts with a dot", "a/.hidden"],
+    ["a reference that starts with a dot", ".hidden"],
     ["a reference with an empty part", "a//b"],
     ["a reference that starts with a slash", "/main"],
     ["a reference that ends with a slash", "main/"],
+    ["a reference that ends with a dot", "main."],
+    ["a reference with a part that ends in .lock", "a/x.lock/b"],
+    ["a reference that ends in .lock", "x.lock"],
     ["a reference with a space", "a b"],
+    ["a reference with a tab", "a\tb"],
+    ["a reference with a new line", "a\nb"],
+    ["a reference with a null", "a\u0000b"],
+    ["a reference with a delete character", "a\u007fb"],
     ["a reference with a query", "main?x=1"],
-    ["a reference with a fragment", "main#x"],
-    ["a reference with a percent sign", "main%2e%2e"],
+    ["a reference with a star", "a*b"],
+    ["a reference with a bracket", "a[b"],
+    ["a reference with a tilde", "main~1"],
+    ["a reference with a caret", "main^"],
+    ["a reference with a colon", "a:b"],
+    ["a reference with a backslash", "a\\b"],
+    ["a reference with @{", "a@{1}"],
+    ["a reference that is only @", "@"],
+    ["a reference with a lone surrogate", "a\ud800b"],
     ["a reference that is empty", ""],
-    ["a reference that is too long", "a".repeat(201)],
+    ["a reference that is too long", "a".repeat(256)],
+    ["a reference that is not text", 5 as never],
+    ["a reference that is a list", ["main"] as never],
   ])("sends nothing for %s", async (_name, ref) => {
     const server = await start();
     const reader = await readerFor(appFor(server));
@@ -538,6 +577,39 @@ describe("reading a repository with a token", () => {
     }
     expect(server.requests).toHaveLength(before);
   });
+
+  // Names that Git allows and that GitHub documents as legal, which have to be read, with the
+  // characters that mean something in an address written so that they cannot.
+  it.each([
+    ["a plus", "feature+x", "feature%2Bx"],
+    ["a dollar sign", "release$1", "release%241"],
+    ["an at sign", "user@host", "user%40host"],
+    ["a hash", "fix#12", "fix%2312"],
+    ["a percent sign", "100%", "100%25"],
+    ["a percent sign that spells ..", "main%2e%2e", "main%252e%252e"],
+    ["an ampersand and an equals sign", "a&b=c", "a%26b%3Dc"],
+    ["letters with marks", "über", "%C3%BCber"],
+    ["letters of another script", "日本語", "%E6%97%A5%E6%9C%AC%E8%AA%9E"],
+    ["slashes between parts", "feature/a/b", "feature/a/b"],
+    ["dots and hyphens", "v1.0.0-rc.1", "v1.0.0-rc.1"],
+    ["a name that is a number", "12345", "12345"],
+    ["a name of 255 characters", "a".repeat(255), "a".repeat(255)],
+    ["a part that only contains a lock", "x.lockx", "x.lockx"],
+    ["an exclamation mark, the first character after the space", "wow!", "wow!"],
+    ["a name that ends in lock without a dot", "unlock", "unlock"],
+    ["a tilde-free name with a hyphen first", "-x", "-x"],
+  ])(
+    "reads a reference with %s, written into the address as it must be",
+    async (_name, ref, written) => {
+      const server = await start();
+      const reader = await readerFor(appFor(server));
+      expect(await reader.getCommitId(OWNER, REPOSITORY, ref)).toBe(COMMIT);
+      expect(server.requests.at(-1)?.path).toBe(`/repos/${OWNER}/${REPOSITORY}/commits/${written}`);
+      await reader.downloadTarball(OWNER, REPOSITORY, ref, { maxBytes: 1_000_000 });
+      const api = server.requests.find((entry) => entry.path.includes("/tarball/"));
+      expect(api?.path).toBe(`/repos/${OWNER}/${REPOSITORY}/tarball/${written}`);
+    },
+  );
 
   it("rejects a commit id that is not one", async () => {
     const path = `GET /repos/${OWNER}/${REPOSITORY}/commits/main`;
@@ -866,10 +938,7 @@ describe("the shape of a token", () => {
     });
   const route = `POST /app/installations/${String(INSTALLATION_ID)}/access_tokens`;
   const ask = (server: FakeGitHub) =>
-    appFor(server).createInstallationToken(INSTALLATION_ID, {
-      repositories: [REPOSITORY],
-      permissions: { contents: "read" },
-    });
+    appFor(server).createInstallationToken(INSTALLATION_ID, REPOSITORY);
 
   it("is accepted at 4,096 characters and refused at 4,097", async () => {
     const long = await start({ rawBodies: { [route]: answer("a".repeat(4096)) } });

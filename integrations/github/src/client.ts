@@ -66,13 +66,6 @@ export interface InstallationInfo {
   readonly suspended: boolean;
 }
 
-/** What an installation token may do, asked for as narrowly as the job needs. */
-export interface TokenScope {
-  /** Names of repositories of the installation's account. A token is never asked for "all". */
-  readonly repositories: readonly string[];
-  readonly permissions: Readonly<Record<string, "read">>;
-}
-
 export interface InstallationToken {
   /** A credential that lasts an hour at most. It is a {@link Secret}, so it cannot be printed by accident. */
   readonly token: Secret;
@@ -105,28 +98,58 @@ export interface DownloadResult {
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const REPOSITORY = /^[A-Za-z0-9._-]{1,100}$/;
-const REFERENCE = /^[A-Za-z0-9._/-]{1,200}$/;
 
 function owner(value: string): string {
-  if (!OWNER.test(value)) throw new GitHubError("invalid_input");
+  if (typeof value !== "string" || !OWNER.test(value)) throw new GitHubError("invalid_input");
   return value;
 }
 
 function repository(value: string): string {
-  if (!REPOSITORY.test(value) || value === "." || value === "..") {
+  if (typeof value !== "string" || !REPOSITORY.test(value) || value === "." || value === "..") {
     throw new GitHubError("invalid_input");
   }
   return value;
 }
 
-/** A commit or a branch or a tag, as the path of a request: each part encoded, and no `.` or `..` part. */
+/** What Git does not allow in a name: control characters, a space, and `~ ^ : ? * [ \`. */
+const hasForbiddenCharacter = (value: string): boolean => {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f || "~^:?*[\\".includes(character)) return true;
+  }
+  return false;
+};
+
+/**
+ * A commit, a branch or a tag, as the path of a request. It must be a name that Git allows for a
+ * reference (`git check-ref-format`), which is a good deal wider than letters and digits: a branch
+ * may hold `+`, `$`, `#`, `%`, `@` and letters of any script. So that none of these can change
+ * the path, each part is percent-encoded (a `%` becomes `%25`, and is never decoded twice), and a
+ * part that is empty (which is how an empty reference is refused), hidden (starts with a dot) or
+ * ends in `.lock` is refused, with `..`.
+ */
 function reference(value: string): string {
-  if (!REFERENCE.test(value)) throw new GitHubError("invalid_input");
-  const parts = value.split("/");
-  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+  if (
+    typeof value !== "string" ||
+    value.length > 255 ||
+    hasForbiddenCharacter(value) ||
+    value.includes("..") ||
+    value.includes("@{") ||
+    value === "@" ||
+    value.endsWith(".")
+  ) {
     throw new GitHubError("invalid_input");
   }
-  return parts.map(encodeURIComponent).join("/");
+  const parts = value.split("/");
+  if (parts.some((part) => part === "" || part.startsWith(".") || part.endsWith(".lock"))) {
+    throw new GitHubError("invalid_input");
+  }
+  try {
+    return parts.map(encodeURIComponent).join("/");
+  } catch {
+    // A lone surrogate cannot be encoded, and is not a name that anyone gave a branch.
+    throw new GitHubError("invalid_input");
+  }
 }
 
 function id(value: number): number {
@@ -195,23 +218,21 @@ export class GitHubApp {
   }
 
   /**
-   * A token for an installation, narrowed to the repositories and permissions that are asked for.
-   * Asking for nothing ("every repository, every permission of the app") is not possible here.
+   * The only token that this client can ask for: one repository of the installation, and read
+   * access to its contents. A wider token (another repository, another permission, "everything")
+   * is not a thing that can be asked for here, so it cannot be asked for by mistake or by a caller
+   * that was fed a name. A different token is a different method, added on purpose.
    */
   async createInstallationToken(
     installationId: number,
-    scope: TokenScope,
+    repositoryName: string,
   ): Promise<InstallationToken> {
-    if (scope.repositories.length === 0 || Object.keys(scope.permissions).length === 0) {
-      throw new GitHubError("invalid_input");
-    }
-    const repositories = scope.repositories.map(repository);
     const response = await this.#transport.api(
       `/app/installations/${String(id(installationId))}/access_tokens`,
       {
         method: "POST",
         credential: this.#jwt(),
-        body: { repositories, permissions: scope.permissions },
+        body: { repositories: [repository(repositoryName)], permissions: { contents: "read" } },
       },
     );
     const created = await this.#transport.json(response, tokenSchema);
