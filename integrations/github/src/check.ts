@@ -139,10 +139,7 @@ export async function runCheck(options: CheckOptions): Promise<CheckReport> {
     installation === undefined
       ? undefined
       : await attempt("a token can be made", () =>
-          app.createInstallationToken(config.installationId, {
-            repositories: [repository],
-            permissions: { contents: "read" },
-          }),
+          app.createInstallationToken(config.installationId, repository),
         );
   if (token === undefined) return finish(results);
   const remaining = token.expiresAt.getTime() - (appOptions.now?.() ?? Date.now());
