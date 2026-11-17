@@ -1,0 +1,48 @@
+name: GitHub App check
+
+# Checks, against GitHub itself, that the CodeMugs Reader app is set up as intended: that its key
+# signs in as the app, that the app can only read contents, that a token narrowed to this one
+# repository can read it and cannot write to it. It prints yes or no for each, never a key or a
+# token (ADR 0027). It reads, and downloads this repository once to count the bytes; it changes
+# nothing.
+#
+# It runs only by hand, and only from main: the private key is a secret of the `github-app`
+# environment, which accepts runs of main alone, so a pull request cannot reach it.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-app-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the GitHub App
+    # The environment refuses any other branch as well. This keeps a run from even being asked for.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: github-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@codemugs/github..." build
+      # The key is in the environment of this step and of no other: install and build, which run
+      # code from dependencies, never see it. The identifiers are not secret.
+      - name: Check the app
+        env:
+          CODEMUGS_GITHUB_APP_ID: "5776596"
+          CODEMUGS_GITHUB_APP_CLIENT_ID: Iv23lipC397du816RxiY
+          CODEMUGS_GITHUB_APP_INSTALLATION_ID: "182391846"
+          CODEMUGS_GITHUB_APP_PRIVATE_KEY: ${{ secrets.CODEMUGS_GITHUB_APP_PRIVATE_KEY }}
+        run: node integrations/github/dist/main.js

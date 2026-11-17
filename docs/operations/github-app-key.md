@@ -1,0 +1,58 @@
+# The GitHub App and its private key
+
+**Status:** Draft. The steps below come from GitHub's documentation and from how the check is built. Nobody has run them against the live app yet, and the names of menus may have changed. [ADR 0027](../architecture/decisions/0027-github-app-read-only.md) is the decision.
+
+## What it is
+
+**CodeMugs Reader** is a GitHub App that can read the contents of repositories it is installed on, and do nothing else. It has one permission (**Contents: read**, with the metadata that GitHub gives to every app), no webhook, and is installed only on the repositories that the owner chose. It signs in with a **private key** (a `.pem` file) and asks GitHub for a token that lasts an hour and is narrowed to one repository.
+
+| Thing           | Value                  | Secret?                   |
+| --------------- | ---------------------- | ------------------------- |
+| App ID          | 5776596                | No                        |
+| Client ID       | `Iv23lipC397du816RxiY` | No                        |
+| Installation ID | 182391846              | No                        |
+| **Private key** | the `.pem` file        | **Yes**                   |
+| Client secret   | not used               | Yes, and should not exist |
+
+The private key is kept in one place: the **`github-app`** environment of this repository, as the secret `CODEMUGS_GITHUB_APP_PRIVATE_KEY`. The environment accepts runs of `main` only. The key is never in chat, in a file in the repository, in a log, or on a laptop longer than it takes to paste it.
+
+## Checking that it works
+
+Run the **GitHub App check** workflow from the Actions tab, on `main` (**Run workflow**). It prints a line for each question, `ok` or `FAIL`, and never the key or a token. It reads and downloads this repository once; it changes nothing.
+
+| A line that says FAIL                                                                                       | What it means                                                                                                                                                                                                                                                                                                                  | What to do                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the key signs in as the app: `key_invalid`                                                                  | The secret is not a PEM RSA key. A client secret, a public key or a truncated paste all look like this.                                                                                                                                                                                                                        | Put the whole contents of the `.pem` file in the secret, from `-----BEGIN` to `-----END`.                                                                     |
+| the key signs in as the app: `request_failed (HTTP 401)`                                                    | GitHub does not know the key. It was deleted, or it belongs to another app.                                                                                                                                                                                                                                                    | Generate a new key for this app and replace the secret.                                                                                                       |
+| it is the app that was meant                                                                                | The key belongs to another app, or the App ID or Client ID in the workflow is wrong.                                                                                                                                                                                                                                           | Compare with the app's settings page.                                                                                                                         |
+| the app can only read contents / the installation can only read contents / the token can only read contents | A permission was added or widened.                                                                                                                                                                                                                                                                                             | Remove it in the app's settings. Do not accept the new permissions on the installation.                                                                       |
+| the app has no webhook events                                                                               | The app subscribes to events.                                                                                                                                                                                                                                                                                                  | Remove them. Nothing here uses webhooks.                                                                                                                      |
+| it is installed for this owner only / on chosen repositories, not all                                       | The installation is on another account, or on all repositories.                                                                                                                                                                                                                                                                | Change the installation to **Only select repositories**.                                                                                                      |
+| the installation is not suspended                                                                           | The installation was suspended.                                                                                                                                                                                                                                                                                                | Unsuspend it, or find out why.                                                                                                                                |
+| a token can be made / the token is for one repository                                                       | GitHub made a token that is wider, longer-lived or for other repositories than was asked.                                                                                                                                                                                                                                      | Stop. Something is wrong with the app or with the assumptions in the ADR.                                                                                     |
+| a write is refused: `HTTP 200` or `201`                                                                     | The write went through.                                                                                                                                                                                                                                                                                                        | Treat as a leak of power: remove the Contents write permission at once, then find out how it got there. An empty blob is harmless, but the permission is not. |
+| a write is refused: `HTTP 422`                                                                              | GitHub accepted the permission and refused the empty content, which means the token could write. (The check assumes that GitHub checks the permission before the body. If a token that only reads ever gets 422, that assumption is wrong, nothing is leaking, and the check needs another route to probe with. Not seen yet.) | Treat as a leak of power until shown otherwise.                                                                                                               |
+| a write is refused: any other status                                                                        | GitHub had a problem or answered in a way that was not expected.                                                                                                                                                                                                                                                               | Run it again. If it persists, report it.                                                                                                                      |
+
+## Changing the key
+
+Do this on a schedule that the owner chooses, and at once if the key may have been seen by anyone else.
+
+1. In the app's settings, under **Private keys**, **generate** a new key. A `.pem` file downloads.
+2. Open it, copy all of it, and put it in the `github-app` environment as the new value of `CODEMUGS_GITHUB_APP_PRIVATE_KEY`.
+3. Delete the downloaded file.
+4. Run the check from `main`. Every line should say `ok`.
+5. In the app's settings, **delete the old key.**
+
+An app may have two keys at once, so there is no gap between steps 2 and 5.
+
+## If the key may have been seen by someone else
+
+1. **Delete the key** in the app's settings, now. Without it nobody can sign in as the app. A token that was already made lasts at most an hour and can only read.
+2. Generate a new key and follow the steps above.
+3. Look at the audit log of the repository and the account, if the plan has one, for reads by the app that were not ours.
+4. Say so in the repository (a private security advisory, [SECURITY.md](../../SECURITY.md)), because that is the record.
+
+## What this does not cover
+
+Private repositories (the only repository it has been pointed at is this one, which is public), more than one installation, and the tokens that will be made for customers. Those need their own steps when they exist.
