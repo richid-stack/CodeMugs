@@ -19,7 +19,7 @@ Everything that GitHub says is data (invariant 2): each answer is read to at mos
 
 ## What does not exist yet
 
-- **Unpacking in the sandbox, or isolated.** The check unpacks with the reader of [ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md), which runs in the host's process and is bounded and not isolated. The unpacking line of the check **has not been run against GitHub yet**; the two live runs below had sixteen lines.
+- **Unpacking in the sandbox, or isolated.** The check unpacks with the reader of [ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md), which runs in the host's process and is bounded and not isolated. The unpacking line of the check was run against GitHub once (2026-11-19, this repository's archive, 434 files, accepted and removed, every line passed); the two earlier live runs below had sixteen lines.
 - **Anything that calls it for a customer.** The check is the only caller, and `analyseArchive` is written to take the download but is not called by anything but tests ([ADR 0029](../../docs/architecture/decisions/0029-connecting-an-archive-to-the-analysis.md)).
 - **Webhooks, pull requests and any permission to write.** The app has none, and writing is a separate decision with a separate permission, never a widening of this one.
 - **Any live check beyond this one public repository.** The tests run against a fake GitHub on this machine, and the check has been run from `main` against GitHub itself twice (2026-11-17, once before and once after the review fixes), and every line passed both times ([ADR 0027](../../docs/architecture/decisions/0027-github-app-read-only.md)). Only this repository, which is public, has been read.

@@ -1,6 +1,6 @@
 # The GitHub App and its private key
 
-**Status:** Draft. The check below was run against the live app twice (2026-11-17) and every line passed both times; it had sixteen lines then, and the seventeenth (the unpacking) has not been run live. The steps for changing and revoking the key come from GitHub's documentation and have not been run, and the names of menus may have changed. [ADR 0027](../architecture/decisions/0027-github-app-read-only.md) is the decision.
+**Status:** Draft. The check below was run against the live app three times (twice on 2026-11-17 with sixteen lines, and once on 2026-11-19 with the seventeenth, the unpacking) and every line passed each time. The steps for changing and revoking the key come from GitHub's documentation and have not been run, and the names of menus may have changed. [ADR 0027](../architecture/decisions/0027-github-app-read-only.md) is the decision.
 
 ## What it is
 
