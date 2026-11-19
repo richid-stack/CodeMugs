@@ -30,10 +30,13 @@ const summary = await extractor.finish(); // counts and sizes, never a name
 
 The caller makes the destination (an absolute path to an empty directory that is not a link) and removes it. An unpacking that fails leaves what it made.
 
+## Run on an archive that GitHub made
+
+The tests use `git archive`, which GitHub uses. The live check of [`@codemugs/github`](../../integrations/github/README.md) unpacks the real download, and did so once on 2026-11-19: this repository's archive, 434 files, accepted and removed ([ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md)). That run did not meet a symbolic link, a path over 79 characters, a file over 76,846 bytes or a private repository.
+
 ## What does not exist yet
 
 - **Use for a customer.** `analyseArchive` joins a download, this reader, staging and the analysis ([ADR 0029](../../docs/architecture/decisions/0029-connecting-an-archive-to-the-analysis.md)), and nothing calls it for a customer: the job that would is step 9.
-- **A run on an archive that GitHub made.** The tests use `git archive`, which GitHub uses. The live check of [`@codemugs/github`](../../integrations/github/README.md) unpacks the real download, and did so once on 2026-11-19: this repository's archive, 434 files, accepted and removed ([ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md)).
 - **Isolation.** The reader has no process of its own, no memory limit from outside and no deadline. See the ADR.
 
 ## Testing
