@@ -29,5 +29,6 @@
 | [0025](0025-analysis-in-the-sandbox.md)                     | The analysis in the sandbox: staged, bounded, checked on exit  | Accepted |
 | [0026](0026-system-graph-storage.md)                        | The system graph in Postgres: immutable runs, per tenant       | Accepted |
 | [0027](0027-github-app-read-only.md)                        | Reading a repository: a read-only GitHub App, a one-repo token | Accepted |
+| [0028](0028-unpacking-a-repository-archive.md)              | Unpacking a repository archive: a small reader, bounded        | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
