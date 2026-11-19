@@ -30,6 +30,21 @@ export const ARCHIVE_LIMITS = Object.freeze({
   maxTotalPathBytes: 32 * MIB,
   /** One extended header (the place where a long name is kept). */
   maxExtendedHeaderBytes: 64 * 1_024,
+  /**
+   * The bytes of the `.tar.gz` that are given, all together. The limit on what the stream expands to
+   * does not stop a stream that goes on with something that expands to nothing (a gzip member that
+   * is empty, an empty block), so what is given is counted too. It is the size of what it may
+   * expand to, which a real archive does not reach: its content is limited to half of that, and the
+   * rest is headers and padding, which compress.
+   */
+  maxCompressedBytes: 1_024 * MIB,
+  /**
+   * The bytes that are waiting for an earlier write to be finished, when a caller makes a write
+   * before the last has settled (`write` takes them in order). Each waiting write counts for its
+   * bytes and a fixed amount more, so that a great many small ones are counted too. A write that
+   * has nothing waiting beside it is never refused, whatever its size: the caller holds it already.
+   */
+  maxPendingBytes: 8 * MIB,
 });
 
 export type ArchiveLimits = { -readonly [Key in keyof typeof ARCHIVE_LIMITS]: number };
