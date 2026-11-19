@@ -31,6 +31,8 @@ describe("the limits", () => {
       maxNameBytes: 255,
       maxTotalPathBytes: 33_554_432,
       maxExtendedHeaderBytes: 65_536,
+      maxCompressedBytes: 1_073_741_824,
+      maxPendingBytes: 8_388_608,
     });
     expect(Object.isFrozen(ARCHIVE_LIMITS)).toBe(true);
   });

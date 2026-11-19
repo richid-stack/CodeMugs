@@ -113,6 +113,10 @@ class Extraction implements TarballExtractor {
   readonly #reader: TarReader;
   readonly #pump: Promise<void>;
   #queue: Promise<unknown> = Promise.resolve();
+  /** What the writes that are waiting count for (see `maxPendingBytes`). */
+  #pending = 0;
+  /** The bytes of the `.tar.gz` that were given, all together. */
+  #given = 0;
   #decompressed = 0;
   #error: ArchiveError | undefined;
   #ended = false;
@@ -157,9 +161,35 @@ class Extraction implements TarballExtractor {
   }
 
   write(chunk: Uint8Array): Promise<void> {
-    const run = this.#queue.then(() => this.#write(chunk));
+    // Both limits are checked as the write is made, and not when its turn comes, so that a caller
+    // that makes them without waiting is stopped before the queue holds more than the limit.
+    const size = chunk instanceof Uint8Array ? chunk.byteLength : 0;
+    this.#given += size;
+    if (this.#given > this.#limits.maxCompressedBytes) return this.#refuse("too_large");
+    // What is waiting is counted by more than its bytes, so that a great many empty writes are too.
+    // A write that nothing waits beside is taken whatever its size: the caller holds it already.
+    const cost = size + PENDING_WRITE_COST;
+    if (this.#pending > 0 && this.#pending + cost > this.#limits.maxPendingBytes) {
+      return this.#refuse("invalid_input");
+    }
+    this.#pending += cost;
+    const run = this.#queue
+      .then(() => this.#write(chunk))
+      .finally(() => {
+        this.#pending -= cost;
+      });
     this.#queue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * Refuses a write, and fails the unpacking: bytes that were not taken leave a gap in the archive,
+   * so no more are taken, and the first failure is the one that stays.
+   */
+  #refuse(code: "too_large" | "invalid_input"): Promise<void> {
+    const error = new ArchiveError(code);
+    this.#fail(error);
+    return Promise.reject(this.#error ?? error);
   }
 
   async #write(chunk: Uint8Array): Promise<void> {
@@ -201,6 +231,9 @@ class Extraction implements TarballExtractor {
     return { ...this.#writer.summary(), decompressedBytes: this.#decompressed };
   }
 }
+
+/** What a write that is waiting counts for besides its bytes: its promise and what it holds. */
+const PENDING_WRITE_COST = 1_024;
 
 type Kind = "directory" | "file" | "symlink";
 
