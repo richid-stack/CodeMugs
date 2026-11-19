@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { tarball } from "@codemugs/archive/testing";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Secret } from "@codemugs/configuration";
@@ -17,6 +18,19 @@ export const REPOSITORY = "widgets";
  * out, so that a scanner of source does not take it for one.
  */
 export const FAKE_CLIENT_SECRET = "0123456789".repeat(4);
+/**
+ * A repository's archive the way GitHub makes one: gzip, every path under one top directory named
+ * after the repository and the commit. It is what the fake serves unless a test says otherwise, so
+ * that what the check unpacks is a real archive.
+ */
+export function repositoryArchive(): Buffer {
+  const top = `${OWNER}-${REPOSITORY}-0123abc`;
+  return tarball([
+    { name: `${top}/README.md`, content: "# widgets\n" },
+    { name: `${top}/src/index.ts`, content: "export const widgets = 1;\n" },
+  ]);
+}
+
 export const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 export const INSTALLATION_TOKEN = "fake-installation-token-for-tests-only";
 export const DOWNLOAD_CREDENTIAL = "fake-credential-that-the-download-address-carries";
@@ -145,7 +159,7 @@ function defaults(): FakeConfig {
       private: false,
       default_branch: "main",
     },
-    tarball: randomBytes(4096),
+    tarball: repositoryArchive(),
     tarballStatus: 302,
     tarballLocation: undefined,
     downloadStatus: 200,

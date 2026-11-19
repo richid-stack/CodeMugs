@@ -2,7 +2,7 @@
 
 Unpacks a repository's `.tar.gz` into an empty directory, from bytes that arrive in pieces, with every name, size and count bounded. It is for archives that a customer chose, which are untrusted.
 
-**Status:** Phase 2 · Understanding (started, step 7d-2). The reader exists and is tested, including against archives written to hurt it. **Nothing calls it for a customer yet**, it has not been run on an archive that GitHub made, and it is **not isolated**: it runs in the host's process. Release gate 8 is not touched by it. The decision and its limits are in [ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md).
+**Status:** Phase 2 · Understanding (started, step 7d-2). The reader exists and is tested, including against archives written to hurt it. **Nothing calls it for a customer yet** (its callers are `analyseArchive` of [`@codemugs/application-intelligence`](../../core/application-intelligence/README.md), which a customer's repository does not reach yet, and the live GitHub check), it has not been run on an archive that GitHub made (the check that does so has not been run yet), and it is **not isolated**: it runs in the host's process. Release gate 8 is not touched by it. The decision and its limits are in [ADR 0028](../../docs/architecture/decisions/0028-unpacking-a-repository-archive.md).
 
 ## What it does
 
@@ -32,8 +32,8 @@ The caller makes the destination (an absolute path to an empty directory that is
 
 ## What does not exist yet
 
-- **Use for a customer.** Connecting the download of [`@codemugs/github`](../../integrations/github/README.md), this reader, staging and the analysis is the second half of 7d-2.
-- **A run on an archive that GitHub made.** The tests use `git archive`, which GitHub uses.
+- **Use for a customer.** `analyseArchive` joins a download, this reader, staging and the analysis ([ADR 0029](../../docs/architecture/decisions/0029-connecting-an-archive-to-the-analysis.md)), and nothing calls it for a customer: the job that would is step 9.
+- **A run on an archive that GitHub made.** The tests use `git archive`, which GitHub uses. The live check of [`@codemugs/github`](../../integrations/github/README.md) now unpacks the real download, and has not been run with that yet.
 - **Isolation.** The reader has no process of its own, no memory limit from outside and no deadline. See the ADR.
 
 ## Testing

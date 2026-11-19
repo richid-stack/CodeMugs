@@ -1,3 +1,8 @@
+import { randomBytes } from "node:crypto";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { tarball } from "@codemugs/archive/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { formatReport, readsContentsOnly, runCheck, type CheckReport } from "./check.js";
 import { loadGitHubAppConfig } from "./config.js";
@@ -10,6 +15,7 @@ import {
   OWNER,
   REPOSITORY,
   otherKeys,
+  repositoryArchive,
   sha256,
   secretOf,
   startFakeGitHub,
@@ -21,9 +27,12 @@ import {
 } from "./test-harness.js";
 
 let fake: FakeGitHub | undefined;
+const workspaces: string[] = [];
 afterEach(async () => {
   await fake?.close();
   fake = undefined;
+  for (const workspace of workspaces.splice(0))
+    await rm(workspace, { recursive: true, force: true });
 });
 
 const NAMES = [
@@ -42,24 +51,30 @@ const NAMES = [
   "the repository can be read",
   "the latest commit can be read",
   "the repository can be downloaded",
+  "the download can be unpacked",
   "a write is refused",
 ] as const;
 
 interface Run {
   readonly report: CheckReport;
   readonly server: FakeGitHub;
+  /** The folder that the download was unpacked in, which is the check's to leave empty. */
+  readonly workspace: string;
 }
 
 const run = async (
   overrides: Partial<FakeConfig> = {},
   options: {
     readonly maxDownloadBytes?: number;
+    readonly unpackRoot?: (workspace: string) => string;
     readonly privateKey?: string;
     readonly now?: () => number;
   } = {},
 ): Promise<Run> => {
   const server = await startFakeGitHub(overrides);
   fake = server;
+  const workspace = await mkdtemp(join(tmpdir(), "codemugs-check-test-"));
+  workspaces.push(workspace);
   const config = loadGitHubAppConfig(validEnv());
   const report = await runCheck({
     config:
@@ -70,12 +85,13 @@ const run = async (
     repository: REPOSITORY,
     apiBaseUrl: server.url,
     downloadHosts: ["127.0.0.1"],
+    unpackRoot: options.unpackRoot?.(workspace) ?? workspace,
     ...(options.maxDownloadBytes === undefined
       ? {}
       : { maxDownloadBytes: options.maxDownloadBytes }),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
-  return { report, server };
+  return { report, server, workspace };
 };
 
 const failed = (report: CheckReport): string[] =>
@@ -116,6 +132,7 @@ describe("a setup that is right", () => {
         "the repository can be downloaded",
         `${String(server.config.tarball.length)} bytes, sha256 ${hash}`,
       ],
+      ["the download can be unpacked", "files 2, directories 1, content 36 bytes, copy removed"],
       ["a write is refused", "HTTP 403"],
     ]);
   });
@@ -399,6 +416,7 @@ describe("what cannot be read", () => {
     });
     expect(failed(report)).toEqual(["the latest commit can be read"]);
     expect(server.downloads()).toHaveLength(0);
+    expect(namesOf(report)).not.toContain("the download can be unpacked");
   });
 
   it("fails, with the reason, when the download is sent somewhere that is not allowed", async () => {
@@ -409,17 +427,25 @@ describe("what cannot be read", () => {
     expect(formatReport(report)).not.toContain("evil.example.com");
   });
 
-  it("fails when the download is empty", async () => {
+  it("fails when the download is empty, and says that there is nothing to unpack", async () => {
     const { report } = await run({ tarball: Buffer.alloc(0) });
-    expect(failed(report)).toEqual(["the repository can be downloaded"]);
+    expect(failed(report)).toEqual([
+      "the repository can be downloaded",
+      "the download can be unpacked",
+    ]);
+    expect(detail(report, "the download can be unpacked")).toBe("corrupt");
   });
 
   it("fails when the download is larger than the limit, and passes at exactly the limit", async () => {
-    const { report: over } = await run({}, { maxDownloadBytes: 4095 });
+    const size = repositoryArchive().length;
+    const { report: over, workspace } = await run({}, { maxDownloadBytes: size - 1 });
+    // Only the download is said to have failed: what was unpacked of it had nothing wrong.
     expect(failed(over)).toEqual(["the repository can be downloaded"]);
     expect(detail(over, "the repository can be downloaded")).toBe("download_too_large");
+    expect(namesOf(over)).not.toContain("the download can be unpacked");
+    expect(await readdir(workspace)).toEqual([]);
     await fake?.close();
-    const { report: exact } = await run({}, { maxDownloadBytes: 4096 });
+    const { report: exact } = await run({}, { maxDownloadBytes: size });
     expect(failed(exact)).toEqual([]);
   });
 
@@ -431,6 +457,79 @@ describe("what cannot be read", () => {
     expect(failed(report)).toEqual([
       "the app can only read contents",
       "the app has no webhook events",
+      "a write is refused",
+    ]);
+  });
+});
+
+const namesOf = (report: CheckReport): string[] => report.results.map((result) => result.name);
+
+/**
+ * Whether a bad archive is refused while it is being given or only when it ends depends on how the
+ * decompressor has got on by then, so a test does not say which: the unpacking is what is said to
+ * have failed, and if the download is said to have failed too it is because the unpacking stopped it.
+ */
+const unpackingFailedAlone = (report: CheckReport): void => {
+  expect(failed(report).filter((name) => name !== "the repository can be downloaded")).toEqual([
+    "the download can be unpacked",
+  ]);
+  if (failed(report).includes("the repository can be downloaded")) {
+    expect(detail(report, "the repository can be downloaded")).toBe("sink_failed");
+  }
+};
+
+describe("the download is unpacked", () => {
+  it("is unpacked in a directory that is made for it and is gone when the check ends", async () => {
+    const { report, workspace } = await run();
+    expect(failed(report)).toEqual([]);
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("fails, with the code and nothing of the archive, for a download that is not an archive", async () => {
+    const { report, workspace } = await run({ tarball: randomBytes(4096) });
+    unpackingFailedAlone(report);
+    expect(detail(report, "the download can be unpacked")).toBe("corrupt");
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("fails, and names nothing from the archive, for an archive that would write outside its directory", async () => {
+    const hostile = tarball([{ name: "top/../../SECRET-NAME/escape.txt", content: "x" }]);
+    const { report, workspace } = await run({ tarball: hostile });
+    unpackingFailedAlone(report);
+    expect(detail(report, "the download can be unpacked")).toBe("unsafe_path");
+    expect(formatReport(report)).not.toContain("SECRET");
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("fails, with the download passing, for an archive that is cut short", async () => {
+    const whole = repositoryArchive();
+    const { report, workspace } = await run({ tarball: whole.subarray(0, whole.length - 10) });
+    expect(failed(report)).toEqual(["the download can be unpacked"]);
+    expect(detail(report, "the download can be unpacked")).toBe("corrupt");
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("fails for an archive with no file in it, and says how many it had", async () => {
+    const { report } = await run({ tarball: tarball([{ name: "top/", type: "directory" }]) });
+    expect(failed(report)).toEqual(["the download can be unpacked"]);
+    expect(detail(report, "the download can be unpacked")).toBe(
+      "files 0, directories 0, content 0 bytes, copy removed",
+    );
+  });
+
+  it("fails, and still downloads, when there is nowhere to unpack", async () => {
+    const { report, server } = await run(
+      {},
+      { unpackRoot: (workspace) => join(workspace, "does-not-exist") },
+    );
+    expect(failed(report)).toEqual(["the download can be unpacked"]);
+    expect(detail(report, "the download can be unpacked")).toBe("unexpected_error");
+    expect(detail(report, "the repository can be downloaded")).toMatch(/ bytes, sha256 /);
+    expect(server.downloads()).toHaveLength(1);
+    // It is reported where the unpacking would have been, before the write is tried.
+    expect(namesOf(report).slice(-3)).toEqual([
+      "the download can be unpacked",
+      "the repository can be downloaded",
       "a write is refused",
     ]);
   });

@@ -69,13 +69,7 @@ export interface AnalyseInSandboxOptions {
  * the sandbox (invariant 8).
  */
 export async function analyseInSandbox(options: AnalyseInSandboxOptions): Promise<RepositoryFacts> {
-  const availability = await options.driver.availability().catch(() => undefined);
-  if (availability === undefined || !availability.available) {
-    throw new AnalysisError("sandbox_unavailable");
-  }
-  if (!isolationAtLeast(options.driver.isolation, options.minimumIsolation)) {
-    throw new AnalysisError("sandbox_too_weak");
-  }
+  await checkSandbox(options);
 
   const staged = await stageAnalysis({
     repository: options.repository,
@@ -86,6 +80,23 @@ export async function analyseInSandbox(options: AnalyseInSandboxOptions): Promis
     return factsOf(result);
   } finally {
     await staged.cleanup();
+  }
+}
+
+/**
+ * That the driver can run here and isolates as much as the caller asked for. It is the first thing
+ * that an analysis does, before anything is copied, and the first thing that an analysis of an
+ * archive does, before anything is downloaded.
+ */
+export async function checkSandbox(
+  options: Pick<AnalyseInSandboxOptions, "driver" | "minimumIsolation">,
+): Promise<void> {
+  const availability = await options.driver.availability().catch(() => undefined);
+  if (availability === undefined || !availability.available) {
+    throw new AnalysisError("sandbox_unavailable");
+  }
+  if (!isolationAtLeast(options.driver.isolation, options.minimumIsolation)) {
+    throw new AnalysisError("sandbox_too_weak");
   }
 }
 

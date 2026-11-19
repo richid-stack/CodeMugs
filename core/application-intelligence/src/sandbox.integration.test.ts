@@ -14,8 +14,10 @@ import { analyse } from "./analyse.js";
 import { ANALYSIS_LIMITS } from "./constants.js";
 import { AnalysisError } from "./errors.js";
 import type { RepositoryFacts } from "./facts.js";
+import { analyseArchive } from "./archive.js";
 import { analyseInSandbox } from "./run.js";
 import { directorySource } from "./source.js";
+import { archiveOfDirectory } from "./test-drivers.js";
 
 /**
  * The analysis, in a real sandbox: the analyser, the parser and a repository are put in a directory,
@@ -108,7 +110,11 @@ for (const flavour of flavours) {
     afterEach(async () => {
       // The staged directory is removed whatever happened, so that nothing of a repository is left.
       if (!flavour.usable) return;
-      expect((await readdir(work)).filter((name) => name.startsWith("analysis-"))).toEqual([]);
+      expect(
+        (await readdir(work)).filter(
+          (name) => name.startsWith("analysis-") || name.startsWith("checkout-"),
+        ),
+      ).toEqual([]);
     });
 
     afterAll(async () => {
@@ -158,6 +164,28 @@ for (const flavour of flavours) {
       expect(facts.routes.map((route) => `${route.method} ${route.path}`)).toEqual(
         expect.arrayContaining(["GET /health", "GET /products", "POST /orders"]),
       );
+    }, 120_000);
+
+    it("gives, for an archive of the demo shop that is unpacked and then analysed, the facts that this process gives for its directory", async () => {
+      const shop = join(repositoryRoot, "tests/demo-shop");
+      const bytes = await archiveOfDirectory(shop);
+      const started = performance.now();
+      const facts = await analyseArchive({
+        driver: flavour.create({ workspaceRoot: work }),
+        workspaceRoot: work,
+        image: image ?? "",
+        minimumIsolation: flavour.isolation,
+        archive: async (sink) => {
+          // In pieces, as a download gives it.
+          for (let at = 0; at < bytes.length; at += 16_384)
+            await sink(bytes.subarray(at, at + 16_384));
+        },
+      });
+      process.stderr.write(
+        `[analysis-timing] ${flavour.name} demo shop from an archive: ${((performance.now() - started) / 1000).toFixed(1)} s, ${String(bytes.length)} bytes\n`,
+      );
+      expect(facts).toEqual(await analyse(directorySource(shop)));
+      // That no unpacked or staged copy is left is checked after every test, above.
     }, 120_000);
 
     it("gives, for this whole repository, the facts that this process gives", async () => {

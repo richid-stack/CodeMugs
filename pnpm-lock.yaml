@@ -109,6 +109,9 @@ importers:
 
   core/application-intelligence:
     dependencies:
+      '@codemugs/archive':
+        specifier: workspace:*
+        version: link:../../packages/archive
       '@codemugs/sandbox-manager':
         specifier: workspace:*
         version: link:../../engineering/sandbox-manager
@@ -143,6 +146,9 @@ importers:
 
   integrations/github:
     dependencies:
+      '@codemugs/archive':
+        specifier: workspace:*
+        version: link:../../packages/archive
       '@codemugs/configuration':
         specifier: workspace:*
         version: link:../../packages/configuration

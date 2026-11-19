@@ -1,9 +1,12 @@
+import { tmpdir } from "node:os";
 import { GitHubApp, type GitHubAppOptions, type Permissions } from "./client.js";
 import type { GitHubAppConfig } from "./config.js";
 import { GitHubError } from "./errors.js";
+import { startUnpacking } from "./unpack.js";
 
 /** The most that the check downloads (this repository is a few hundred kilobytes). */
 const CHECK_MAX_BYTES = 64 * 1024 * 1024;
+const UNPACK = "the download can be unpacked";
 /** A token lasts an hour: more than a little over is not a token of GitHub's. */
 const MAX_TOKEN_LIFETIME_MS = 65 * 60 * 1000;
 
@@ -26,6 +29,8 @@ export interface CheckOptions extends GitHubAppOptions {
   readonly repository: string;
   /** The most that the check downloads. The default is far more than this repository. */
   readonly maxDownloadBytes?: number;
+  /** Where the download is unpacked, in a directory that is made and removed. The default is the system's. */
+  readonly unpackRoot?: string;
 }
 
 /**
@@ -56,10 +61,10 @@ function why(error: unknown): string {
  * Checks, against GitHub itself, that the app is the one that was meant, that it can do exactly
  * what was meant and no more, and that a token narrowed to one repository can read it and cannot
  * write to it. Nothing that it prints is secret. It reads, and downloads the repository once to
- * count the bytes; it changes nothing.
+ * count the bytes and to unpack it into a directory that it removes; it changes nothing on GitHub.
  */
 export async function runCheck(options: CheckOptions): Promise<CheckReport> {
-  const { config, owner, repository, maxDownloadBytes, ...appOptions } = options;
+  const { config, owner, repository, maxDownloadBytes, unpackRoot, ...appOptions } = options;
   const results: CheckResult[] = [];
   const record = (name: string, ok: boolean, detail: string): boolean => {
     results.push({ name, ok, detail });
@@ -179,12 +184,19 @@ export async function runCheck(options: CheckOptions): Promise<CheckReport> {
           reader.getCommitId(owner, repository, found.defaultBranch),
         );
   if (commit !== undefined) record("the latest commit can be read", true, commit.slice(0, 12));
+  // The archive is unpacked as it arrives, so that it is an archive that GitHub made that the
+  // reader of ADR 0028 is shown, and not only one that a test wrote.
+  const unpacking =
+    commit === undefined
+      ? undefined
+      : await attempt(UNPACK, () => startUnpacking(unpackRoot ?? tmpdir()));
   const download =
     commit === undefined
       ? undefined
       : await attempt("the repository can be downloaded", () =>
           reader.downloadTarball(owner, repository, commit, {
             maxBytes: maxDownloadBytes ?? CHECK_MAX_BYTES,
+            ...(unpacking === undefined ? {} : { onChunk: (chunk) => unpacking.sink(chunk) }),
           }),
         );
   if (download !== undefined)
@@ -193,6 +205,8 @@ export async function runCheck(options: CheckOptions): Promise<CheckReport> {
       download.bytes > 0,
       `${String(download.bytes)} bytes, sha256 ${download.sha256.slice(0, 12)}`,
     );
+  const unpacked = await unpacking?.end(download !== undefined);
+  if (unpacked !== undefined) record(UNPACK, unpacked.ok, unpacked.detail);
   const refused = await attempt("a write is refused", () => reader.probeWrite(owner, repository));
   if (refused !== undefined)
     record("a write is refused", refused === 403 || refused === 404, `HTTP ${String(refused)}`);
