@@ -1,25 +1,15 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
-import {
-  assertValidatedRequest,
-  SandboxError,
-  type SandboxDriver,
-  type SandboxResult,
-  type SandboxRunRequest,
-} from "@codemugs/sandbox-manager";
+import { SandboxError, type SandboxDriver, type SandboxResult } from "@codemugs/sandbox-manager";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { analyse } from "./analyse.js";
 import { AnalysisError } from "./errors.js";
 import { parseRepositoryFacts } from "./facts.js";
 import { ANALYSIS_SANDBOX, analyseInSandbox, type AnalyseInSandboxOptions } from "./run.js";
 import { directorySource } from "./source.js";
-
-const run = promisify(execFile);
-const IMAGE = `docker.io/library/node@sha256:${"a".repeat(64)}`;
+import { exited, fakeDriver, IMAGE, standIn } from "./test-drivers.js";
 
 let base: string;
 
@@ -41,66 +31,6 @@ async function directory(files: Record<string, string> = {}): Promise<string> {
     await writeFile(join(root, path), text);
   }
   return root;
-}
-
-const exited = (overrides: Partial<SandboxResult> = {}): SandboxResult => ({
-  outcome: "exited",
-  exitCode: 0,
-  stdout: "",
-  stderr: "",
-  stdoutTruncated: false,
-  stderrTruncated: false,
-  durationMs: 1,
-  ...overrides,
-});
-
-/** A driver that records what it is asked and answers with what the test gives it. */
-function fakeDriver(
-  answer: (request: SandboxRunRequest) => Promise<SandboxResult> | SandboxResult,
-  overrides: Partial<SandboxDriver> = {},
-): SandboxDriver & { requests: SandboxRunRequest[] } {
-  const requests: SandboxRunRequest[] = [];
-  return {
-    requests,
-    name: "fake",
-    isolation: "gvisor",
-    availability: () => Promise.resolve({ available: true }),
-    async run(request) {
-      requests.push(request);
-      return answer(request);
-    },
-    ...overrides,
-  };
-}
-
-/**
- * A stand-in that runs the command on this machine, with no isolation at all, where `/workspace` is
- * the staged directory. It is for tests, over files that the tests wrote: it shows that the host's
- * side of an analysis works from the staging to the facts, and it says nothing of isolation, which
- * the tests against a real driver (`sandbox.integration.test.ts`) are for.
- */
-function standIn(): SandboxDriver {
-  return {
-    name: "stand-in",
-    isolation: "hardened-container",
-    availability: () => Promise.resolve({ available: true }),
-    async run(request) {
-      assertValidatedRequest(request);
-      const source = request.sourceDirectory;
-      if (source === null) throw new Error("the analysis needs a source");
-      const [, ...args] = request.command;
-      const mapped = args
-        .filter((argument) => !argument.startsWith("--max-old-space-size"))
-        .map((argument) => argument.replace(/^\/workspace/, source));
-      try {
-        const { stdout } = await run(process.execPath, mapped, { maxBuffer: 64 * 1024 * 1024 });
-        return exited({ stdout });
-      } catch (error) {
-        const code = (error as { code?: unknown }).code;
-        return exited({ exitCode: typeof code === "number" ? code : 1 });
-      }
-    },
-  };
 }
 
 async function options(

@@ -3,6 +3,7 @@
  * to have it made in the sandbox. The analyser itself is in `./analyser` and runs only inside the
  * sandbox (invariant 8): nothing here imports it.
  */
+export { analyseArchive, type AnalyseArchiveOptions, type ArchiveSink } from "./archive.js";
 export * from "./constants.js";
 export { AnalysisError, type AnalysisErrorCode } from "./errors.js";
 export {

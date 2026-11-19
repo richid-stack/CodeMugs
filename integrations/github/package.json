@@ -21,6 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@codemugs/archive": "workspace:*",
     "@codemugs/configuration": "workspace:*",
     "zod": "4.6.7"
   }
