@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ArchiveError } from "./errors.js";
 import { createTarballExtractor, extractTarball } from "./extract.js";
@@ -109,6 +111,37 @@ describe("the writes that are waiting", () => {
     }
     await extractor.finish();
     expect(await tree(where.dest)).toEqual(["f data.bin"]);
+  });
+});
+
+describe("a write that is waiting", () => {
+  it("is held as it was given, whatever the caller does with its buffer afterwards", async () => {
+    const [first, second, ...rest] = pieces(ARCHIVE, 200);
+    const where = await place();
+    const extractor = await createTarballExtractor({ destination: where.dest });
+    // A caller that reuses one buffer, and does not wait for the write before it does.
+    const reused = Buffer.from(second ?? Buffer.alloc(0));
+    const waiting = [extractor.write(first ?? Buffer.alloc(0)), extractor.write(reused)];
+    reused.fill(0);
+    await Promise.all(waiting);
+    for (const piece of rest) await extractor.write(piece);
+    await extractor.finish();
+    expect(await tree(where.dest)).toEqual(["f data.bin"]);
+    expect(await readFile(join(where.dest, "data.bin"))).toEqual(CONTENT);
+  });
+
+  it("is taken from a view into a larger buffer, which is not kept whole", async () => {
+    // Each piece is a view into a buffer that is much larger than it, as a stream's chunks can be.
+    const where = await place();
+    const extractor = await createTarballExtractor({ destination: where.dest });
+    const waiting = pieces(ARCHIVE, 500).map((piece) => {
+      const backing = Buffer.alloc(1_000_000, 0xff);
+      piece.copy(backing, 123);
+      return extractor.write(backing.subarray(123, 123 + piece.length));
+    });
+    await Promise.all(waiting);
+    await extractor.finish();
+    expect(await readFile(join(where.dest, "data.bin"))).toEqual(CONTENT);
   });
 });
 

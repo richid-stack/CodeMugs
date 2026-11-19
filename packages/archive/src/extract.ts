@@ -172,9 +172,13 @@ class Extraction implements TarballExtractor {
     if (this.#pending > 0 && this.#pending + cost > this.#limits.maxPendingBytes) {
       return this.#refuse("invalid_input");
     }
+    // A write is copied, so that what it keeps alive is what it was counted for (a view into a
+    // larger buffer keeps the whole of that buffer), and so that a caller that reuses its buffer
+    // before the write is done cannot change what is waiting.
+    const held = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
     this.#pending += cost;
     const run = this.#queue
-      .then(() => this.#write(chunk))
+      .then(() => this.#write(held))
       .finally(() => {
         this.#pending -= cost;
       });
