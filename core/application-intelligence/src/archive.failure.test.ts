@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { tarball } from "@codemugs/archive/testing";
 import type * as FileSystem from "node:fs/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -17,6 +18,8 @@ import { exited, fakeDriver, IMAGE } from "./test-drivers.js";
 const failing = vi.hoisted(() => ({
   removeCheckout: undefined as Error | undefined,
   createInCheckout: undefined as Error | undefined,
+  /** Files made in the copy are real, and say that they could not be closed when they are. */
+  closeInCheckout: false,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -29,10 +32,28 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       failing.removeCheckout !== undefined && inCheckout(args[0])
         ? Promise.reject(failing.removeCheckout)
         : actual.rm(...args),
-    open: (...args: Parameters<typeof actual.open>) =>
-      failing.createInCheckout !== undefined && inCheckout(args[0])
-        ? Promise.reject(failing.createInCheckout)
-        : actual.open(...args),
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (failing.createInCheckout !== undefined && inCheckout(args[0])) {
+        throw failing.createInCheckout;
+      }
+      const handle = await actual.open(...args);
+      if (!failing.closeInCheckout || !inCheckout(args[0])) return handle;
+      // The file is closed, so that the test leaves nothing open, and then it says that it was not.
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "close") {
+            return async () => {
+              await target.close();
+              throw new Error("EIO: /secret/path");
+            };
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function"
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        },
+      });
+    },
   };
 });
 
@@ -48,6 +69,7 @@ beforeAll(async () => {
 afterEach(() => {
   failing.removeCheckout = undefined;
   failing.createInCheckout = undefined;
+  failing.closeInCheckout = false;
 });
 
 afterAll(async () => {
@@ -122,6 +144,45 @@ describe("analyseArchive, when the disk fails", () => {
     const settings = await options();
     expect(await code(analyseArchive(settings))).toBe("sandbox_failed");
     failing.createInCheckout = undefined;
+    expect(await readdir(settings.workspaceRoot)).toEqual([]);
+  });
+
+  it("throws what the source threw, and removes the copy, when a half-unpacked file cannot be closed", async () => {
+    failing.closeInCheckout = true;
+    const thrown = new Error("the download failed");
+    const bytes = tarball([{ name: "repo-abc/big.bin", content: randomBytes(300_000) }]);
+    const settings = await options();
+    let caught: unknown;
+    try {
+      await analyseArchive({
+        ...settings,
+        archive: async (sink) => {
+          await sink(bytes.subarray(0, 200_000));
+          throw thrown;
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(thrown);
+    expect(await readdir(settings.workspaceRoot)).toEqual([]);
+  });
+
+  it("says what was wrong with the archive, and removes the copy, when the file cannot be closed either", async () => {
+    failing.closeInCheckout = true;
+    const bytes = tarball([{ name: "repo-abc/big.bin", content: randomBytes(300_000) }]);
+    const settings = await options();
+    expect(
+      await code(
+        analyseArchive({
+          ...settings,
+          unpackLimits: { maxDecompressedBytes: 100_000 },
+          archive: async (sink) => {
+            await sink(bytes);
+          },
+        }),
+      ),
+    ).toBe("repository_too_large");
     expect(await readdir(settings.workspaceRoot)).toEqual([]);
   });
 });

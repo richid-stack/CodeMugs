@@ -67,7 +67,9 @@ export async function startUnpacking(root: string): Promise<Unpacking> {
           failure = error;
         }
       }
-      if (summary === undefined) await extractor.abort();
+      // That a file could not be closed is not said: what is being reported matters more, and the
+      // directory is removed next.
+      if (summary === undefined) await extractor.abort().catch(() => undefined);
       let removed = true;
       try {
         await rm(directory, { recursive: true, force: true });

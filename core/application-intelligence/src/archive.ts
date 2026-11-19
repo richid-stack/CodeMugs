@@ -1,6 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { ArchiveError, createTarballExtractor, type ArchiveLimits } from "@codemugs/archive";
+import {
+  ArchiveError,
+  createTarballExtractor,
+  type ArchiveLimits,
+  type TarballExtractor,
+} from "@codemugs/archive";
 import { AnalysisError } from "./errors.js";
 import type { RepositoryFacts } from "./facts.js";
 import { analyseInSandbox, checkSandbox, type AnalyseInSandboxOptions } from "./run.js";
@@ -106,16 +111,24 @@ async function unpack(options: AnalyseArchiveOptions, checkout: string): Promise
   try {
     await options.archive(sink);
   } catch (error) {
-    await extractor.abort();
+    await stop(extractor);
     if (failed) throw analysisErrorOf(unpackFailure);
     throw error;
   }
   try {
     await extractor.finish();
   } catch (error) {
-    await extractor.abort();
+    await stop(extractor);
     throw analysisErrorOf(error);
   }
+}
+
+/**
+ * Stops an unpacking and closes the file that it has open. That the file could not be closed is not
+ * said: the failure that is being reported is the one that matters, and the copy is removed after.
+ */
+async function stop(extractor: TarballExtractor): Promise<void> {
+  await extractor.abort().catch(() => undefined);
 }
 
 function analysisErrorOf(error: unknown): AnalysisError {
