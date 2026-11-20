@@ -25,7 +25,12 @@ const ROLE_PASSWORD = "codemugs_dev_only";
 // Serialises role and database creation between test files running in parallel, and anything else
 // that changes a role that those files share: two changes to one role at once fail with "tuple
 // concurrently updated".
-export const SETUP_LOCK_KEY = 727_227_002;
+//
+// An advisory lock belongs to one database, so sessions connected to different databases do not
+// exclude each other. That is why this key is private and everything goes through withSetupLock,
+// which always connects to the database the server was configured with. A lock taken from a
+// connection to a test file's own database looks the same and excludes nothing.
+const SETUP_LOCK_KEY = 727_227_002;
 
 export function adminDatabaseUrl(): string | undefined {
   const url = process.env["CODEMUGS_TEST_DATABASE_URL"];
@@ -73,6 +78,28 @@ async function ensureRole(client: Client, role: string): Promise<void> {
 }
 
 /**
+ * Runs `work` while holding the lock that serialises changes to the roles the test files share.
+ * Use it for anything that alters one of those roles, and for creating them. `work` gets the
+ * privileged connection that holds the lock, which is to the database the server was configured
+ * with, not to a test file's own. The lock is given back when `work` ends, however it ends.
+ */
+export async function withSetupLock<T>(work: (client: Client) => Promise<T>): Promise<T> {
+  const baseUrl = adminDatabaseUrl();
+  if (baseUrl === undefined) {
+    throw new Error("CODEMUGS_TEST_DATABASE_URL is not set");
+  }
+  const client = new Client({ connectionString: baseUrl });
+  await client.connect();
+  try {
+    // A session-level lock: ending the connection gives it back.
+    await client.query("SELECT pg_advisory_lock($1)", [SETUP_LOCK_KEY]);
+    return await work(client);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * Creates a fresh database and the restricted role, and by default applies the migrations as the
  * privileged role. Pass `migrate: false` for tests that run migrations themselves.
  */
@@ -87,17 +114,11 @@ export async function createTestDatabase(
   // Lower-case hex only, so the name is safe to use as an unquoted identifier.
   const name = `cm_test_${randomBytes(6).toString("hex")}`;
 
-  const maintenance = new Client({ connectionString: baseUrl });
-  await maintenance.connect();
-  try {
-    // A session-level lock, released when the connection ends.
-    await maintenance.query("SELECT pg_advisory_lock($1)", [SETUP_LOCK_KEY]);
+  await withSetupLock(async (maintenance) => {
     await ensureRole(maintenance, APP_ROLE);
     await ensureRole(maintenance, DISPATCHER_ROLE);
     await maintenance.query(`CREATE DATABASE ${name}`);
-  } finally {
-    await maintenance.end();
-  }
+  });
 
   const database: TestDatabase = {
     name,
