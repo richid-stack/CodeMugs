@@ -1,3 +1,4 @@
+import { Client } from "pg";
 import { describe, expect, it } from "vitest";
 import { adminDatabaseUrl, createTestDatabase, withSetupLock } from "./postgres.js";
 
@@ -22,7 +23,11 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 // this lock in its own database, so it excluded nothing, and it failed in CI (once in many runs).
 describeDatabase("the setup lock", () => {
   it("is taken on the database the server was configured with, whichever database the caller uses", async () => {
-    const configured = new URL(adminDatabaseUrl() ?? "").pathname.slice(1);
+    const url = adminDatabaseUrl();
+    if (url === undefined) throw new Error("CODEMUGS_TEST_DATABASE_URL is not set");
+    // What pg resolves for this URL, defaults included (a URL without a database path means the
+    // user's name). A client that is never connected opens nothing.
+    const configured = new Client({ connectionString: url }).database;
 
     const held = await withSetupLock(async (client) => {
       const result = await client.query<{ name: string }>("SELECT current_database() AS name");
