@@ -4,7 +4,7 @@
 
 The graph of one project's repository, made from the facts that [`@codemugs/application-intelligence`](../application-intelligence/README.md) produces: files, packages, modules, routes, environment variables and frameworks, and the imports, dependencies and definitions between them. What the runtime shows (services, tables, deployments, incidents) joins it later.
 
-A graph is a **run**: one analysis, stored once and never changed. A newer analysis is a new run, and the latest run of a project is the graph now. The facts are a customer's names and are data, never instructions (invariant 2); no content and no value is in them.
+A graph is a **run**: one analysis, stored once and never changed. A newer analysis is a new run, and the run of a project that was stored last is the graph now. The facts are a customer's names and are data, never instructions (invariant 2); no content and no value is in them.
 
 ## Interface
 
@@ -22,11 +22,11 @@ import {
 ```
 
 - `buildGraph(facts)`: a pure function from facts to nodes, edges and a digest. The same facts in any order give the same graph. Facts that describe one thing in two ways (a variable listed twice with another number of reads, a package directory listed as two packages, a framework shown twice by one kind of evidence with another count or category) are refused with `facts_rejected`, because which one was kept would depend on the order. (Listing the same file twice for one variable is refused too, in one fact or in two, as it always was: it would be one edge twice.) A route that a file defines twice at one line keeps the first line, then the surer, then the style by name.
-- `saveAnalysis(client, { runId, projectId, revision?, facts })`: stores a run, whole or not at all, in the transaction of `client` (a `TenantClient` from `withTenant`). The same `runId` with the same facts is a retry (`duplicate: true`); with other facts, or for another project, it is `run_conflict`.
+- `saveAnalysis(client, { runId, projectId, revision?, facts })`: stores a run, whole or not at all, in the transaction of `client` (a `TenantClient` from `withTenant`). The same `runId` for the same run (the same project, graph, revision and account of the analysis) is a retry (`duplicate: true`), and ids are lower-cased once checked, so capitals do not matter; anything else with that `runId` is `run_conflict`.
 - `getRun`, `latestRun(client, projectId)`, `findNode(client, runId, kind, key)`, `listNodes` (a page at a time), `neighbours(client, runId, nodeId, { direction, kind?, limit? })` and `importClosure(client, runId, path, { direction, maxDepth?, limit? })`: reads that see only the client's organisation. A limit is 1 to 10,000 and a depth 1 to 50.
 - Errors are `GraphError` with a code (`invalid_input`, `facts_rejected`, `project_not_found`, `run_conflict`) and a fixed sentence that says nothing of the facts.
 
-The tables are `analysis_runs`, `graph_nodes` and `graph_edges` ([migration 0006](../../packages/storage/migrations/0006_system_graph.sql)). The application can insert and read them and cannot update or delete.
+The tables are `analysis_runs`, `graph_nodes` and `graph_edges` ([migration 0006](../../packages/storage/migrations/0006_system_graph.sql); [0007](../../packages/storage/migrations/0007_analysis_run_order.sql) adds the sequence that says which run was stored last, which is never returned). The application can insert and read them and cannot update or delete.
 
 ## What is and is not shown
 

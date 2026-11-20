@@ -4,7 +4,9 @@ import { z } from "zod";
 import { buildGraph } from "./build.js";
 import { GraphError } from "./errors.js";
 
-const uuid = z.uuid();
+// A UUID is written in lower case once it has been checked. PostgreSQL gives it back that way, and
+// a retry that wrote it in capitals is the same retry.
+const uuid = z.uuid().transform((value) => value.toLowerCase());
 const revision = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
 export interface SaveAnalysisInput {
@@ -38,8 +40,17 @@ const INSERT_RUN = `
   RETURNING id
 `;
 
+// Whether the run that is in the way is this run again, and not another that was given the same id:
+// the same project, the same graph (the digest), the same revision and the same record of the
+// analysis (the summary, which holds the version of the facts, the counts and what was cut short).
+// It is asked of the database, which compares a UUID, a revision that may be missing and a document
+// as what they are and not as text.
 const STORED_RUN = `
-  SELECT project_id, digest, node_count, edge_count
+  SELECT project_id = $3::uuid
+         AND digest = $4
+         AND revision IS NOT DISTINCT FROM $5::text
+         AND summary = $6::jsonb AS same,
+         node_count, edge_count
     FROM analysis_runs
    WHERE organisation_id = $1 AND id = $2
 `;
@@ -107,13 +118,19 @@ export async function saveAnalysis(
 
   if (inserted.rowCount === 0) {
     const stored = await client.query<{
-      project_id: string;
-      digest: string;
+      same: boolean;
       node_count: number;
       edge_count: number;
-    }>(STORED_RUN, [client.organisationId, runId.data]);
+    }>(STORED_RUN, [
+      client.organisationId,
+      runId.data,
+      projectId.data,
+      graph.digest,
+      commit?.data ?? null,
+      JSON.stringify(graph.summary),
+    ]);
     const run = stored.rows[0];
-    if (run === undefined || run.project_id !== projectId.data || run.digest !== graph.digest) {
+    if (run === undefined || !run.same) {
       throw new GraphError("run_conflict");
     }
     return { runId: runId.data, duplicate: true, nodes: run.node_count, edges: run.edge_count };

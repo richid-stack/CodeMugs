@@ -335,16 +335,20 @@ export function buildGraph(facts: RepositoryFacts): BuiltGraph {
     )
     .digest("hex");
 
+  // What was cut short is a set: the same reasons in another order, or one twice, are the same
+  // analysis, and are stored the same way so that storing it again can be told from storing another.
+  const truncated = sorted(facts.limits.truncated);
+
   return {
     nodes: builtNodes,
     edges: builtEdges,
     summary: {
       analyser: { name: facts.analyser.name, typescript: facts.analyser.typescript },
       factsVersion: facts.version,
-      limits: facts.limits,
+      limits: { ...facts.limits, truncated },
       unresolvedImports,
     },
-    truncated: [...facts.limits.truncated],
+    truncated,
     digest,
   };
 }

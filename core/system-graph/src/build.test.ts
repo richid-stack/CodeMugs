@@ -207,6 +207,19 @@ describe("buildGraph", () => {
     ).toEqual({ evidence: ["dependency"] });
   });
 
+  it("lists what the analysis cut short in one order, once each, however the facts list it", () => {
+    for (const truncated of [
+      ["time", "imports", "files"],
+      ["files", "time", "imports"],
+      ["imports", "files", "files", "time", "imports"],
+    ] as const) {
+      const cut = buildGraph(makeFacts({ files: ["a.ts"], truncated: [...truncated] }));
+      expect(cut.truncated).toEqual(["files", "imports", "time"]);
+      // The summary is stored beside it and compared with it when a run is stored again.
+      expect(cut.summary).toMatchObject({ limits: { truncated: ["files", "imports", "time"] } });
+    }
+  });
+
   it("keeps what the analysis cut short, and counts and limits of the analysis, and no content", () => {
     const cut = buildGraph(makeFacts({ files: ["a.ts"], truncated: ["imports", "time"] }));
     expect(cut.truncated).toEqual(["imports", "time"]);

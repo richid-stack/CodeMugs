@@ -197,6 +197,117 @@ describeDatabase("saving an analysis in PostgreSQL", () => {
       expect(await stored(runId)).toEqual(before);
     });
 
+    it("is a retry when the ids are written in capitals the second time", async () => {
+      const runId = randomUUID();
+      const first = await save(a, { runId, projectId: a.projectId, facts: shopFacts() });
+      const again = await save(a, {
+        runId: runId.toUpperCase(),
+        projectId: a.projectId.toUpperCase(),
+        facts: shopFacts(),
+      });
+      expect(again).toEqual({ ...first, duplicate: true });
+    });
+
+    it("says the id of a run in lower case, however it was written", async () => {
+      const runId = randomUUID();
+      const saved = await save(a, {
+        runId: runId.toUpperCase(),
+        projectId: a.projectId.toUpperCase(),
+        facts: shopFacts(),
+      });
+      expect(saved.runId).toBe(runId);
+      expect((await stored(runId)).runs).toHaveLength(1);
+    });
+
+    describe("with the same id and the same graph but not the same run", () => {
+      it("is refused when the revision is another", async () => {
+        const runId = randomUUID();
+        await save(a, { runId, projectId: a.projectId, revision: REVISION, facts: shopFacts() });
+        const before = await stored(runId);
+        const other = "fedcba9876543210fedcba9876543210fedcba98";
+        await expect(
+          graphErrorCode(
+            save(a, { runId, projectId: a.projectId, revision: other, facts: shopFacts() }),
+          ),
+        ).resolves.toBe("run_conflict");
+        expect(await stored(runId)).toEqual(before);
+      });
+
+      it("is refused when a revision is given the second time and was not the first", async () => {
+        const runId = randomUUID();
+        await save(a, { runId, projectId: a.projectId, facts: shopFacts() });
+        await expect(
+          graphErrorCode(
+            save(a, { runId, projectId: a.projectId, revision: REVISION, facts: shopFacts() }),
+          ),
+        ).resolves.toBe("run_conflict");
+      });
+
+      it("is refused when the revision was given the first time and is not the second", async () => {
+        const runId = randomUUID();
+        await save(a, { runId, projectId: a.projectId, revision: REVISION, facts: shopFacts() });
+        await expect(
+          graphErrorCode(save(a, { runId, projectId: a.projectId, facts: shopFacts() })),
+        ).resolves.toBe("run_conflict");
+      });
+
+      it("is refused when the analysis cut something else short, and changes nothing", async () => {
+        const runId = randomUUID();
+        const files = ["a.ts", "b.ts"];
+        await save(a, { runId, projectId: a.projectId, facts: makeFacts({ files }) });
+        const before = await stored(runId);
+        const cut = makeFacts({ files, truncated: ["imports"] });
+        await expect(
+          graphErrorCode(save(a, { runId, projectId: a.projectId, facts: cut })),
+        ).resolves.toBe("run_conflict");
+        expect(await stored(runId)).toEqual(before);
+      });
+
+      it("is refused when the analysis skipped something else, and changes nothing", async () => {
+        const runId = randomUUID();
+        const facts = makeFacts({ files: ["a.ts", "b.ts"] });
+        await save(a, { runId, projectId: a.projectId, facts });
+        const before = await stored(runId);
+        const skipped = {
+          ...facts,
+          limits: { ...facts.limits, skipped: { ...facts.limits.skipped, tooLarge: 2 } },
+        };
+        await expect(
+          graphErrorCode(save(a, { runId, projectId: a.projectId, facts: skipped })),
+        ).resolves.toBe("run_conflict");
+        expect(await stored(runId)).toEqual(before);
+      });
+
+      it("is a retry when what was cut short is listed in another order", async () => {
+        const runId = randomUUID();
+        const files = ["a.ts", "b.ts"];
+        await save(a, {
+          runId,
+          projectId: a.projectId,
+          facts: makeFacts({ files, truncated: ["time", "imports", "files"] }),
+        });
+        const again = await save(a, {
+          runId,
+          projectId: a.projectId,
+          facts: makeFacts({ files, truncated: ["files", "time", "imports"] }),
+        });
+        expect(again.duplicate).toBe(true);
+      });
+    });
+
+    it("is refused when the graph is another with the same counts and limits, and changes nothing", async () => {
+      // One file each, so the summary of the two analyses is the same: only the graph tells them apart.
+      const runId = randomUUID();
+      await save(a, { runId, projectId: a.projectId, facts: makeFacts({ files: ["one.ts"] }) });
+      const before = await stored(runId);
+      await expect(
+        graphErrorCode(
+          save(a, { runId, projectId: a.projectId, facts: makeFacts({ files: ["two.ts"] }) }),
+        ),
+      ).resolves.toBe("run_conflict");
+      expect(await stored(runId)).toEqual(before);
+    });
+
     it("is refused when the id and the facts are the same but the project is not", async () => {
       const runId = randomUUID();
       await save(a, { runId, projectId: a.projectId, facts: shopFacts() });
@@ -295,10 +406,11 @@ describeDatabase("saving an analysis in PostgreSQL", () => {
     it("is refused as a conflict, and not as a crash", async () => {
       const runId = randomUUID();
       await save(a, { runId, projectId: a.projectId, facts: shopFacts() });
+      // The one read that saveAnalysis makes is the one of the run that is in the way.
       const blind = (client: TenantClient): TenantClient => ({
         organisationId: client.organisationId,
         query: (sql, values) =>
-          sql.includes("SELECT project_id, digest")
+          /^\s*SELECT/i.test(sql)
             ? Promise.resolve({ rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] })
             : client.query(sql, values),
       });
