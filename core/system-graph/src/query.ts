@@ -70,7 +70,11 @@ export async function getRun(client: TenantClient, runId: string): Promise<RunRe
   return row === undefined ? null : toRun(row);
 }
 
-/** The newest run of a project: "the graph as it is now". Null when it was never analysed. */
+/**
+ * The run of a project that was stored last: "the graph as it is now". Null when it was never
+ * analysed. Runs are ordered by when they were stored and not by their time, which two runs of one
+ * transaction share (migration 0007).
+ */
 export async function latestRun(
   client: TenantClient,
   projectId: string,
@@ -78,7 +82,7 @@ export async function latestRun(
   const result = await client.query<RunRow>(
     `SELECT ${RUN_COLUMNS} FROM analysis_runs
       WHERE organisation_id = $1 AND project_id = $2
-      ORDER BY analysed_at DESC, id DESC
+      ORDER BY stored_seq DESC
       LIMIT 1`,
     [client.organisationId, id(projectId)],
   );

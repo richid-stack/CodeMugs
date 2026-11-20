@@ -90,6 +90,25 @@ describeDatabase("reading the system graph from PostgreSQL", () => {
       expect(run?.analysedAt).toBeInstanceOf(Date);
     });
 
+    it("says nothing of the order in which runs were stored, which counts every organisation's runs", async () => {
+      const keys = [
+        "analysedAt",
+        "digest",
+        "edgeCount",
+        "factsVersion",
+        "id",
+        "nodeCount",
+        "projectId",
+        "revision",
+        "summary",
+        "truncated",
+      ];
+      const byId = await read(a, (client) => getRun(client, shopRun));
+      const latest = await read(a, (client) => latestRun(client, a.projectId));
+      expect(Object.keys(byId ?? {}).sort()).toEqual(keys);
+      expect(Object.keys(latest ?? {}).sort()).toEqual(keys);
+    });
+
     it("gives nothing for a run that does not exist", async () => {
       expect(await read(a, (client) => getRun(client, randomUUID()))).toBeNull();
     });
@@ -110,6 +129,34 @@ describeDatabase("reading the system graph from PostgreSQL", () => {
       expect((await read(a, (client) => latestRun(client, a.otherProjectId)))?.id).toBe(newer);
       expect(await read(b, (client) => latestRun(client, b.otherProjectId))).toBeNull();
       expect(await read(a, (client) => latestRun(client, randomUUID()))).toBeNull();
+    });
+
+    // Every run that one transaction stores has the same start time, so the time cannot say which
+    // was stored last. A worker that stores two analyses of one project in one transaction, and
+    // reads "the graph now", must get the second, whatever the two ids happen to be.
+    describe("when two runs of one project are stored in one transaction", () => {
+      // Ids that sort far apart, so that an order by id would give the other answer.
+      const low = (n: number) => `00000000-0000-4000-8000-0000000000${String(n)}`;
+      const high = (n: number) => `ffffffff-ffff-4fff-8fff-ffffffffff${String(n)}`;
+
+      it.each([
+        ["the lower id second", high(10), low(10)],
+        ["the higher id second", low(11), high(11)],
+      ])("gives the one that was stored last, with %s", async (_name, first, second) => {
+        await withTenant(h.app, a.organisationId, async (client) => {
+          await saveAnalysis(client, {
+            runId: first,
+            projectId: a.otherProjectId,
+            facts: makeFacts({ files: ["x.ts"] }),
+          });
+          await saveAnalysis(client, {
+            runId: second,
+            projectId: a.otherProjectId,
+            facts: makeFacts({ files: ["y.ts"] }),
+          });
+        });
+        expect((await read(a, (client) => latestRun(client, a.otherProjectId)))?.id).toBe(second);
+      });
     });
   });
 
