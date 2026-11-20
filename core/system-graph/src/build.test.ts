@@ -413,6 +413,14 @@ describe("buildGraph when two facts about one thing disagree", () => {
       }
     });
 
+    it("is refused when two facts that say the same name the same file, whatever order they are in", () => {
+      // Two edges of one kind between two nodes, which the facts can only say by listing a file
+      // twice. This is refused with one fact or with two, and it never depended on the order.
+      for (const envVars of bothWays([port, { ...port }])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), envVars }))).toBe("facts_rejected");
+      }
+    });
+
     it("is one node with both files when it is listed twice in the same way, whatever order they are in", () => {
       const other = { ...port, files: ["apps/api/src/routes.ts"] };
       const digests = new Set<string>();
