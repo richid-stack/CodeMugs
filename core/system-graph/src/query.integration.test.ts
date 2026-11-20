@@ -319,6 +319,14 @@ describeDatabase("reading the system graph from PostgreSQL", () => {
       expect(files(one)).toEqual(["src/b.ts:1"]);
     });
 
+    it("counts the files of the levels before when it stops at the number of files", async () => {
+      // c is one step away and b and d are two: a limit of two is used up by c and the first of them.
+      const two = await read(a, (client) =>
+        importClosure(client, cycleRun, "src/a.ts", { direction: "importers", limit: 2 }),
+      );
+      expect(files(two)).toEqual(["src/c.ts:1", "src/b.ts:2"]);
+    });
+
     it("gives nothing for a file with no imports, for a path that is not a file, and for a package", async () => {
       expect(
         await read(a, (client) =>
@@ -445,6 +453,70 @@ describeDatabase("reading the system graph from PostgreSQL", () => {
       ).toBe(1 + 2);
     });
 
+    describe("what one level brings back from the nodes", () => {
+      /** The rows that the statements reading `graph_nodes` bring back, and the statements. */
+      async function nodeRows(work: (client: TenantClient) => Promise<unknown>) {
+        let rows = 0;
+        await read(a, (client) =>
+          work({
+            organisationId: client.organisationId,
+            query: ((text: string, values?: unknown[]) => {
+              const result = client.query(text, values);
+              // Registered before the caller's own, so the count is made when the caller has the rows.
+              void result.then((done) => {
+                if (text.includes("FROM graph_nodes")) rows += done.rows.length;
+              });
+              return result;
+            }) as TenantClient["query"],
+          }),
+        );
+        return rows;
+      }
+
+      // One file that 30 others import and that imports the same 30: whichever way it is walked, one
+      // level has 30 files in it, and a limit of a few must not fetch them all.
+      const internal = (path: string) => ({ type: "internal" as const, path });
+      const names = Array.from({ length: 30 }, (_, i) => `src/m${String(i).padStart(2, "0")}.ts`);
+      let hubRun: string;
+      beforeAll(async () => {
+        hubRun = randomUUID();
+        await save(a, {
+          runId: hubRun,
+          projectId: a.otherProjectId,
+          facts: makeFacts({
+            files: ["src/hub.ts", ...names],
+            imports: names.flatMap((name) => [
+              importOf("src/hub.ts", name, internal(name)),
+              importOf(name, "./hub.js", internal("src/hub.ts")),
+            ]),
+          }),
+        });
+      });
+
+      it.each(["imports", "importers"] as const)(
+        "is the files that are given and the one that was asked about, and no more, going %s",
+        async (direction) => {
+          const rows = await nodeRows(async (c) => {
+            const reached = await importClosure(c, hubRun, "src/hub.ts", { direction, limit: 3 });
+            expect(reached.map((entry) => entry.node.key)).toEqual(names.slice(0, 3));
+          });
+          expect(rows).toBe(1 + 3);
+        },
+      );
+
+      it("is every file of the level when the limit is not reached", async () => {
+        const rows = await nodeRows(async (c) => {
+          const reached = await importClosure(c, hubRun, "src/hub.ts", {
+            direction: "imports",
+            limit: 100,
+          });
+          expect(reached.map((entry) => entry.node.key)).toEqual(names);
+        });
+        // The hub, its 30 files, and then the hub is all that they reach, and it was seen.
+        expect(rows).toBe(1 + 30);
+      });
+    });
+
     it("does not look for a file that does not exist beyond the one statement", async () => {
       expect(
         await statements((c) =>
@@ -475,6 +547,31 @@ describeDatabase("reading the system graph from PostgreSQL", () => {
         importClosure(client, runId, "src/e.ts", { direction: "imports" }),
       );
       expect(imports).toEqual([]);
+    });
+
+    it("does not go on from something that is not a file, even if an import leaves it", async () => {
+      // Only a file imports, so the builder makes no such edge. If one were there, a package would
+      // not become a place that a path goes on from.
+      const runId = randomUUID();
+      await save(a, {
+        runId,
+        projectId: a.otherProjectId,
+        facts: makeFacts({
+          files: ["src/x.ts", "src/y.ts"],
+          imports: [importOf("src/x.ts", "express", { type: "package", name: "express" })],
+        }),
+      });
+      const express = await read(a, (client) => findNode(client, runId, "module", "express"));
+      const y = await read(a, (client) => findNode(client, runId, "file", "src/y.ts"));
+      if (express === null || y === null) throw new Error("fixture");
+      await h.admin.query(
+        `INSERT INTO graph_edges (organisation_id, run_id, from_id, to_id, kind) VALUES ($1, $2, $3, $4, 'imports')`,
+        [a.organisationId, runId, express.id, y.id],
+      );
+      const reached = await read(a, (client) =>
+        importClosure(client, runId, "src/x.ts", { direction: "imports" }),
+      );
+      expect(reached).toEqual([]);
     });
   });
 
