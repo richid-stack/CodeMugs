@@ -8,8 +8,8 @@ import {
   APP_ROLE,
   createTestDatabase,
   DISPATCHER_ROLE,
-  SETUP_LOCK_KEY,
   type TestDatabase,
+  withSetupLock,
 } from "./testing/postgres.js";
 import { findSchemaViolations } from "./testing/schema-guard.js";
 
@@ -511,29 +511,33 @@ describeDatabase("the isolation checks themselves (canary)", () => {
   it("reports a runtime role that is more powerful than it should be", async () => {
     // Role changes are transactional in PostgreSQL, so this one connection sees them and nobody
     // else does: the roles are shared with test files running in parallel.
-    const alone = createPool({ connectionString: adminUrl, maxConnections: 1 });
-    try {
-      await alone.query("BEGIN");
-      // Other test files set these roles up, with an ALTER ROLE of their own, whenever they make a
-      // database, and two changes to one role at the same time fail with "tuple concurrently
-      // updated" (it failed this test in CI). Their setup holds this lock while it does that, so
-      // this takes it too, until the transaction ends.
-      await alone.query("SELECT pg_advisory_xact_lock($1)", [SETUP_LOCK_KEY]);
-      await alone.query(`ALTER ROLE ${DISPATCHER_ROLE} BYPASSRLS CREATEDB`);
-      await alone.query(`GRANT ${APP_ROLE} TO ${DISPATCHER_ROLE}`);
-      await alone.query(`ALTER TABLE leaky OWNER TO ${APP_ROLE}`);
-      const violations = await findSchemaViolations(alone);
-      expect(violations).toEqual(
-        expect.arrayContaining([
-          `role ${DISPATCHER_ROLE} can bypass row-level security, create databases`,
-          `role ${DISPATCHER_ROLE} is a member of role ${APP_ROLE}`,
-          `role ${APP_ROLE} owns leaky, and an owner can switch row security off`,
-        ]),
-      );
-    } finally {
-      await alone.query("ROLLBACK");
-      await alone.end();
-    }
+    //
+    // Other test files set these roles up, with an ALTER ROLE of their own, whenever they make a
+    // database, and two changes to one role at the same time fail with "tuple concurrently
+    // updated" (it failed this test in CI). Their setup holds the setup lock while it does that, so
+    // this holds it too, until the transaction has ended. The lock has to be taken through
+    // withSetupLock: one taken from this connection, which is to this file's own database, would
+    // not exclude their setups, which are connected to another.
+    await withSetupLock(async () => {
+      const alone = createPool({ connectionString: adminUrl, maxConnections: 1 });
+      try {
+        await alone.query("BEGIN");
+        await alone.query(`ALTER ROLE ${DISPATCHER_ROLE} BYPASSRLS CREATEDB`);
+        await alone.query(`GRANT ${APP_ROLE} TO ${DISPATCHER_ROLE}`);
+        await alone.query(`ALTER TABLE leaky OWNER TO ${APP_ROLE}`);
+        const violations = await findSchemaViolations(alone);
+        expect(violations).toEqual(
+          expect.arrayContaining([
+            `role ${DISPATCHER_ROLE} can bypass row-level security, create databases`,
+            `role ${DISPATCHER_ROLE} is a member of role ${APP_ROLE}`,
+            `role ${APP_ROLE} owns leaky, and an owner can switch row security off`,
+          ]),
+        );
+      } finally {
+        await alone.query("ROLLBACK");
+        await alone.end();
+      }
+    });
     // Rolled back: the shared role is as restricted as before.
     expect((await findSchemaViolations(admin)).filter((line) => line.startsWith("role "))).toEqual(
       [],
