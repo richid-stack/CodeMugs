@@ -1,3 +1,4 @@
+import type { RepositoryFacts } from "@codemugs/application-intelligence";
 import { describe, expect, it } from "vitest";
 import { buildGraph } from "./build.js";
 import { GraphError } from "./errors.js";
@@ -375,6 +376,153 @@ describe("buildGraph when the facts say the same thing twice", () => {
     } catch (error) {
       expect((error as GraphError).code).toBe("facts_rejected");
     }
+  });
+});
+
+/**
+ * A retry of the same analysis with the facts listed in another order must give the same digest, or
+ * `saveAnalysis` reports the retry as a conflict. A fact that is listed twice and says two things
+ * would give a graph that depends on which of them comes first, so it is refused, or, where it
+ * can be settled without looking at the order, settled.
+ */
+describe("buildGraph when two facts about one thing disagree", () => {
+  /** The code of the error that a build fails with, or "built" when it does not fail. */
+  function outcome(run: () => unknown): string {
+    try {
+      run();
+    } catch (error) {
+      return error instanceof GraphError ? error.code : "another error";
+    }
+    return "built";
+  }
+
+  function bothWays<T>(items: readonly [T, T]): [T, T][] {
+    return [
+      [items[0], items[1]],
+      [items[1], items[0]],
+    ];
+  }
+
+  describe("a variable", () => {
+    const port = { name: "PORT", reads: 1, files: ["apps/api/src/server.ts"] };
+
+    it("is refused when it is listed twice with another number of reads, whatever order they are in", () => {
+      const other = { ...port, reads: 5, files: ["apps/api/src/routes.ts"] };
+      for (const envVars of bothWays([port, other])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), envVars }))).toBe("facts_rejected");
+      }
+    });
+
+    it("is refused when two facts that say the same name the same file, whatever order they are in", () => {
+      // Two edges of one kind between two nodes, which the facts can only say by listing a file
+      // twice. This is refused with one fact or with two, and it never depended on the order.
+      for (const envVars of bothWays([port, { ...port }])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), envVars }))).toBe("facts_rejected");
+      }
+    });
+
+    it("is one node with both files when it is listed twice in the same way, whatever order they are in", () => {
+      const other = { ...port, files: ["apps/api/src/routes.ts"] };
+      const digests = new Set<string>();
+      for (const envVars of bothWays([port, other])) {
+        const graph = buildGraph({ ...shopFacts(), envVars });
+        digests.add(graph.digest);
+        expect(node(graph, "env_var", "PORT").attributes).toEqual({ reads: 1 });
+        expect(
+          graph.edges.filter((edge) => edge.kind === "reads_env").map((edge) => edge.from),
+        ).toHaveLength(2);
+      }
+      expect(digests.size).toBe(1);
+    });
+  });
+
+  describe("a package directory", () => {
+    it("is refused when it is listed twice as another package, whatever order they are in", () => {
+      const first = packageOf("apps/api", "api");
+      const second = packageOf("apps/api", "something-else");
+      for (const packages of bothWays([first, second])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), packages }))).toBe("facts_rejected");
+      }
+    });
+  });
+
+  describe("a route that one file defines at one line", () => {
+    function route(style: "router" | "http", confidence: "high" | "heuristic") {
+      const base = shopFacts().routes[0];
+      if (base === undefined) throw new Error("fixture");
+      return { ...base, line: 7, style, confidence };
+    }
+    function edgeOf(routes: readonly ReturnType<typeof route>[]) {
+      const graph = buildGraph({ ...shopFacts(), routes: [...routes] });
+      const first = routes[0];
+      if (first === undefined) throw new Error("fixture");
+      return {
+        digest: graph.digest,
+        attributes: edgeBetween(
+          graph,
+          ["file", first.file],
+          ["route", `${first.method} ${first.path}`],
+          "defines_route",
+        ).attributes,
+      };
+    }
+
+    it("keeps the surer of two, whatever order they are in", () => {
+      const sure = route("router", "high");
+      const unsure = route("http", "heuristic");
+      const results = bothWays([sure, unsure]).map((routes) => edgeOf(routes));
+      expect(results[0]?.attributes).toEqual({ confidence: "high", line: 7, style: "router" });
+      expect(results[1]).toEqual(results[0]);
+    });
+
+    it("keeps the same one of two that are as sure, whatever order they are in", () => {
+      const results = bothWays([route("router", "heuristic"), route("http", "heuristic")]).map(
+        (routes) => edgeOf(routes),
+      );
+      expect(results[0]?.attributes).toEqual({ confidence: "heuristic", line: 7, style: "http" });
+      expect(results[1]).toEqual(results[0]);
+    });
+  });
+
+  describe("a framework shown by one kind of evidence", () => {
+    const shown: RepositoryFacts["frameworks"][number] = {
+      name: "express",
+      category: "web",
+      evidence: "import",
+      usedIn: 1,
+      files: ["apps/api/src/server.ts"],
+    };
+
+    it("is refused when it is listed twice with another count, whatever order they are in", () => {
+      const other = { ...shown, usedIn: 4, files: ["apps/api/src/routes.ts"] };
+      for (const frameworks of bothWays([shown, other])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), frameworks }))).toBe("facts_rejected");
+      }
+    });
+
+    it("is refused when it is listed twice with another category, whatever order they are in", () => {
+      const other = { ...shown, category: "test" as const, files: ["apps/api/src/routes.ts"] };
+      for (const frameworks of bothWays([shown, other])) {
+        expect(outcome(() => buildGraph({ ...shopFacts(), frameworks }))).toBe("facts_rejected");
+      }
+    });
+
+    it("has the files of both when it is listed twice in the same way, whatever order they are in", () => {
+      const other = { ...shown, files: ["apps/api/src/routes.ts"] };
+      const digests = new Set<string>();
+      for (const frameworks of bothWays([shown, other])) {
+        const graph = buildGraph({ ...shopFacts(), frameworks });
+        digests.add(graph.digest);
+        expect(node(graph, "framework", "express").attributes).toEqual({
+          category: "web",
+          usedIn: { import: 1 },
+        });
+        expect(
+          graph.edges.filter((edge) => edge.kind === "uses_framework").map((edge) => edge.from),
+        ).toHaveLength(2);
+      }
+      expect(digests.size).toBe(1);
+    });
   });
 });
 

@@ -13,6 +13,24 @@ import type {
 
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+type RouteFact = RepositoryFacts["routes"][number];
+
+/** The surer a route is, the earlier it comes. */
+const CONFIDENCE_ORDER: Readonly<Record<RouteFact["confidence"], number>> = {
+  high: 0,
+  heuristic: 1,
+};
+
+/**
+ * Which of two definitions of one route in one file is the one the graph keeps: the first line, then
+ * the surer, then the style by name. Every difference between two facts is in this order, so the
+ * choice does not depend on which of them was listed first.
+ */
+const routeOrder = (a: RouteFact, b: RouteFact): number =>
+  a.line - b.line ||
+  CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence] ||
+  compare(a.style, b.style);
+
 /** A reference to a node before the nodes have numbers: its kind and its key. */
 const ref = (kind: NodeKind, key: string): string => `${kind}\n${key}`;
 
@@ -66,7 +84,14 @@ export function buildGraph(facts: RepositoryFacts): BuiltGraph {
 
   const addNode = (kind: NodeKind, key: string, attributes: JsonObject = {}): string => {
     const reference = ref(kind, key);
-    if (!nodes.has(reference)) nodes.set(reference, { kind, key, attributes });
+    const known = nodes.get(reference);
+    if (known === undefined) {
+      nodes.set(reference, { kind, key, attributes });
+    } else if (canonicalJson(known.attributes) !== canonicalJson(attributes)) {
+      // One node that the facts describe in two ways. Keeping the first would make the graph, and
+      // its digest, depend on the order of the facts, so the facts are refused.
+      throw new GraphError("facts_rejected");
+    }
     return reference;
   };
   const addEdge = (from: string, to: string, kind: EdgeKind, attributes: JsonObject = {}): void => {
@@ -198,8 +223,8 @@ export function buildGraph(facts: RepositoryFacts): BuiltGraph {
     for (const path of variable.files) addEdge(ref("file", path), to, "reads_env");
   }
 
-  // A route that a file defines twice has one edge, with the first of them in it.
-  const defined = new Map<string, PendingEdge & { line: number }>();
+  // A route that a file defines twice has one edge, with the first of them in it (see routeOrder).
+  const defined = new Map<string, { from: string; to: string; route: RouteFact }>();
   for (const route of facts.routes) {
     const to = addNode("route", `${route.method} ${route.path}`, {
       method: route.method,
@@ -208,28 +233,38 @@ export function buildGraph(facts: RepositoryFacts): BuiltGraph {
     const from = ref("file", route.file);
     const key = `${from}\n${to}`;
     const known = defined.get(key);
-    if (known === undefined || route.line < known.line) {
-      defined.set(key, {
-        from,
-        to,
-        kind: "defines_route",
-        line: route.line,
-        attributes: { confidence: route.confidence, line: route.line, style: route.style },
-      });
+    if (known === undefined || routeOrder(route, known.route) < 0) {
+      defined.set(key, { from, to, route });
     }
   }
-  for (const edge of defined.values()) {
-    addEdge(edge.from, edge.to, "defines_route", edge.attributes);
+  for (const { from, to, route } of defined.values()) {
+    addEdge(from, to, "defines_route", {
+      confidence: route.confidence,
+      line: route.line,
+      style: route.style,
+    });
   }
 
-  // A framework is one node however it was shown (declared, imported or both).
+  // A framework is one node however it was shown (declared, imported or both). Shown twice by one
+  // kind of evidence, it must be said the same way, or which count and category are kept would
+  // depend on the order of the facts.
   const frameworks = new Map<
     string,
     { category: string; usedIn: Record<string, number>; files: Map<string, Set<string>> }
   >();
+  const shown = new Map<string, RepositoryFacts["frameworks"][number]>();
   for (const framework of [...facts.frameworks].sort(
     (a, b) => compare(a.name, b.name) || compare(a.evidence, b.evidence),
   )) {
+    const shownKey = `${framework.name}\n${framework.evidence}`;
+    const before = shown.get(shownKey);
+    if (
+      before !== undefined &&
+      (before.usedIn !== framework.usedIn || before.category !== framework.category)
+    ) {
+      throw new GraphError("facts_rejected");
+    }
+    shown.set(shownKey, framework);
     let known = frameworks.get(framework.name);
     if (known === undefined) {
       known = { category: framework.category, usedIn: {}, files: new Map() };
