@@ -629,6 +629,25 @@ describeDatabase("the worker", () => {
       expect(seen).toEqual([{ organisation: orgA, rows: 0 }]);
     });
 
+    it("refuses a write through read, which would be kept whatever became of the job", async () => {
+      const kind = uniqueKind();
+      const { jobId, subjectId } = await enqueue(orgA, kind, 1);
+      startWorker({
+        [kind]: longJob(async (job, { read }) => {
+          await read((client) =>
+            client.query(
+              "INSERT INTO test_effects (organisation_id, subject_id, attempt) VALUES ($1, $2, $3)",
+              [client.organisationId, job.subjectId, job.attempt],
+            ),
+          );
+          return () => Promise.resolve();
+        }),
+      });
+      await waitForStatus(jobId, "dead");
+      expect((await h.job(jobId)).last_error_code).toBe("db_25006"); // read_only_sql_transaction
+      expect(await h.effects(subjectId)).toBe(0);
+    });
+
     it("rolls back what a failed commit wrote, and does the work again on the next attempt", async () => {
       const kind = uniqueKind();
       const { jobId, subjectId } = await enqueue(orgA, kind);
@@ -713,11 +732,13 @@ describeDatabase("the worker", () => {
         { concurrency: 1 },
       );
       await working.wait;
-      await h.expire(jobId);
-      const taken = await claimJobs(h.dispatcher, { kinds: [kind], limit: 1, leaseSeconds: 60 });
-      expect(taken.jobs[0]).toMatchObject({ jobId, attempt: 2 });
-
-      release.open();
+      try {
+        await h.expire(jobId);
+        const taken = await claimJobs(h.dispatcher, { kinds: [kind], limit: 1, leaseSeconds: 60 });
+        expect(taken.jobs[0]).toMatchObject({ jobId, attempt: 2 });
+      } finally {
+        release.open(); // A failure above must not leave the work waiting for ever.
+      }
       await waitFor("the late run to be turned away", () =>
         events.some((event) => event.type === "lease_lost"),
       );

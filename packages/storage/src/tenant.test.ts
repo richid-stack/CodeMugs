@@ -127,6 +127,20 @@ describe("withTenant", () => {
     await expect(captured?.query("SELECT 1")).rejects.toBeInstanceOf(TenantContextError);
     expect(fake.queries.filter((q) => q.text === "SELECT 1")).toHaveLength(0);
   });
+  describe("a read-only transaction", () => {
+    it("begins as one, so that no write in it can be kept", async () => {
+      const fake = fakePool();
+      await withTenant(fake.pool, randomUUID(), () => Promise.resolve(), { readOnly: true });
+      expect(fake.queries.map((query) => query.text)[0]).toBe("BEGIN READ ONLY");
+    });
+
+    it("is not the default", async () => {
+      const fake = fakePool();
+      await withTenant(fake.pool, randomUUID(), () => Promise.resolve());
+      expect(fake.queries.map((query) => query.text)[0]).toBe("BEGIN");
+    });
+  });
+
   describe("when the database ends the session in the middle of the work", () => {
     // Without a listener, the connection's `error` event is an uncaught exception, which ends the
     // process. This is what happens to a transaction that sits idle for longer than the database

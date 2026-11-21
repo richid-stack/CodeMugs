@@ -47,8 +47,9 @@ export interface LongJobContext {
   /** Aborted when the lease runs out, as for a handler. */
   readonly signal: AbortSignal;
   /**
-   * Runs `body` in a transaction restricted to the job's organisation, and ends it when `body`
-   * does. It is for reading what the work needs (a row that says what to fetch). Keep it short:
+   * Runs `body` in a **read-only** transaction restricted to the job's organisation, and ends it
+   * when `body` does. It is for reading what the work needs (a row that says what to fetch), and
+   * a write in it is refused by the database: writes are made in the commit. Keep it short:
    * a transaction that is idle for long is ended by the database (see `idleInTransactionTimeoutMs`
    * of the pool), and one that is open holds back the cleaning of old rows.
    */
@@ -197,7 +198,9 @@ export async function runWorker(options: WorkerOptions): Promise<void> {
       if (isLongJob(handler)) {
         const commit = await handler.long(job, {
           signal: leaseExpired,
-          read: (body) => withTenant(app, job.organisationId, body),
+          // Read-only, so that a write made here, which would be kept whatever became of the job,
+          // is refused by the database and not left to a rule in a comment.
+          read: (body) => withTenant(app, job.organisationId, body, { readOnly: true }),
         });
         await withTenant(app, job.organisationId, async (client) => {
           await commit(client);

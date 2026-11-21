@@ -24,11 +24,16 @@ export interface TenantClient {
  * The organisation must come from the authenticated credential (invariant 1), never from a
  * request body, query string or event payload. The setting is transaction-local, so it can
  * never leak to the next user of a pooled connection.
+ *
+ * With `readOnly` the transaction begins as a read-only one, and the database refuses (SQLSTATE
+ * 25006) any statement in it that writes. Work that only reads should ask for it, so that a write
+ * that it makes by mistake is an error and not something that is kept.
  */
 export async function withTenant<T>(
   pool: Pool,
   organisationId: string,
   work: (client: TenantClient) => Promise<T>,
+  options: { readonly readOnly?: boolean } = {},
 ): Promise<T> {
   const parsed = organisationIdSchema.safeParse(organisationId);
   if (!parsed.success) {
@@ -50,7 +55,7 @@ export async function withTenant<T>(
   };
   client.on("error", onConnectionError);
   try {
-    await client.query("BEGIN");
+    await client.query(options.readOnly === true ? "BEGIN READ ONLY" : "BEGIN");
     await client.query("SELECT set_config('app.organisation_id', $1, true)", [parsed.data]);
     const scoped: TenantClient = {
       organisationId: parsed.data,
