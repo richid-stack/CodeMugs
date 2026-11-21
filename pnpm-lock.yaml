@@ -36,6 +36,34 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
 
+  apps/analysis-worker:
+    dependencies:
+      '@codemugs/application-intelligence':
+        specifier: workspace:*
+        version: link:../../core/application-intelligence
+      '@codemugs/archive':
+        specifier: workspace:*
+        version: link:../../packages/archive
+      '@codemugs/github':
+        specifier: workspace:*
+        version: link:../../integrations/github
+      '@codemugs/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
+      '@codemugs/repository-analysis':
+        specifier: workspace:*
+        version: link:../../core/repository-analysis
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@codemugs/system-graph':
+        specifier: workspace:*
+        version: link:../../core/system-graph
+    devDependencies:
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+
   apps/api:
     dependencies:
       '@codemugs/auth':
