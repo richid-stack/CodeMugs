@@ -230,3 +230,86 @@ export function shopFacts(): RepositoryFacts {
     ],
   });
 }
+
+/**
+ * The largest answer that the analysis can give, with every list at its limit, and with as many
+ * different things as the limits allow, so that it makes the most nodes and the most edges that a
+ * run can have:
+ *
+ * - 20,000 files, of which 1,000 are package.json files, one for each of 1,000 packages, and the
+ *   others are source files that are in a package (an `in_package` edge each);
+ * - 100,000 dependencies, a hundred for each package, each of a name of its own (a module and a
+ *   `depends_on` edge each);
+ * - 100,000 imports of modules, each of a name of its own (a module and an `imports` edge each);
+ * - 2,000 variables, each read in 20 files; 5,000 routes; 200 frameworks, each in 20 files.
+ *
+ * Nothing in it is the same as anything else, so no edge is made of two facts and no node is shared.
+ */
+export const LARGEST_RUN = Object.freeze({
+  nodes: 20_000 + 1_000 + 100_000 + 100_000 + 2_000 + 5_000 + 200,
+  edges: 100_000 + 20_000 + 100_000 + 2_000 * 20 + 5_000 + 200 * 20,
+});
+
+export function largestFacts(): RepositoryFacts {
+  const packages = 1_000;
+  const sourcesPerPackage = 19;
+  const id = (number: number): string => String(number).padStart(4, "0");
+  const directory = (number: number): string => `pkg/p${id(number)}`;
+  const sources: string[] = [];
+  const files: string[] = [];
+  for (let number = 0; number < packages; number += 1) {
+    files.push(`${directory(number)}/package.json`);
+    for (let source = 0; source < sourcesPerPackage; source += 1) {
+      const path = `${directory(number)}/src/m${String(source)}.ts`;
+      files.push(path);
+      sources.push(path);
+    }
+  }
+  const sourceAt = (index: number): string => sources[index % sources.length] ?? "";
+  const filesAt = (index: number, count: number): string[] =>
+    Array.from({ length: count }, (_, offset) => sourceAt(index * 7 + offset));
+
+  return makeFacts({
+    files,
+    packages: Array.from({ length: packages }, (_, number) =>
+      packageOf(
+        directory(number),
+        `big-p${id(number)}`,
+        Array.from({ length: 100 }, (_, dependency) => ({
+          name: `dep-${id(number)}-${String(dependency)}`,
+          kind: "runtime" as const,
+          source: "registry" as const,
+          range: "^1.0.0",
+        })),
+      ),
+    ),
+    imports: Array.from({ length: 100_000 }, (_, index) =>
+      importOf(
+        sourceAt(index),
+        `imp-${String(index)}`,
+        { type: "package", name: `imp-${String(index)}` },
+        (index % 500) + 1,
+      ),
+    ),
+    envVars: Array.from({ length: 2_000 }, (_, index) => ({
+      name: `VAR_${String(index)}`,
+      reads: 20,
+      files: filesAt(index, 20),
+    })),
+    routes: Array.from({ length: 5_000 }, (_, index) => ({
+      method: "GET" as const,
+      path: `/r${String(index)}`,
+      file: sourceAt(index),
+      line: (index % 500) + 1,
+      style: "router" as const,
+      confidence: "high" as const,
+    })),
+    frameworks: Array.from({ length: 200 }, (_, index) => ({
+      name: `framework-${String(index)}`,
+      category: "web" as const,
+      evidence: "import" as const,
+      usedIn: 20,
+      files: filesAt(index + 5, 20),
+    })),
+  });
+}

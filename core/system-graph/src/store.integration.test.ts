@@ -5,7 +5,7 @@ import { buildGraph } from "./build.js";
 import { databaseErrorCode, describeDatabase, graphErrorCode, startHarness } from "./db-harness.js";
 import type { Harness, Tenant } from "./db-harness.js";
 import { saveAnalysis, type SaveAnalysisInput } from "./store.js";
-import { importOf, makeFacts, shopFacts } from "./test-harness.js";
+import { LARGEST_RUN, importOf, largestFacts, makeFacts, shopFacts } from "./test-harness.js";
 
 const REVISION = "0123456789abcdef0123456789abcdef01234567";
 
@@ -843,7 +843,7 @@ describeDatabase("saving an analysis in PostgreSQL", () => {
       }
     });
 
-    it("is quick for a run of the largest size, even on a connection that has only stored small runs", async () => {
+    it("is quick for a run of 20,000 files and 100,000 imports, even on a connection that has only stored small runs", async () => {
       // One session, so that what it has planned for the checks while the tables were tiny is
       // still what it uses. A planner that has no statistics yet may choose a scan that walks all
       // the nodes of the run for each edge, and that takes minutes: this failed on the statement
@@ -887,7 +887,7 @@ describeDatabase("saving an analysis in PostgreSQL", () => {
     }, 180_000);
   });
 
-  describe("a run of the largest size that the analysis allows", () => {
+  describe("a very large run", () => {
     it("is stored whole, in a reasonable time, and is a retry when stored again", async () => {
       const files = 20_000;
       const paths = Array.from({ length: files }, (_, index) => `src/m${String(index)}.ts`);
@@ -917,6 +917,32 @@ describeDatabase("saving an analysis in PostgreSQL", () => {
         [runId],
       );
       expect(counts.rows[0]).toEqual({ nodes: files, edges: 100_000 });
+
+      const again = await save(a, { runId, projectId: a.projectId, facts });
+      expect(again).toEqual({ ...saved, duplicate: true });
+    }, 180_000);
+
+    it("is stored whole when every list is at its limit, which is the most nodes and edges a run can have", async () => {
+      const facts = largestFacts();
+      const runId = randomUUID();
+
+      const started = performance.now();
+      const saved = await save(a, { runId, projectId: a.projectId, facts });
+      const seconds = (performance.now() - started) / 1000;
+      expect(saved).toEqual({
+        runId,
+        duplicate: false,
+        nodes: LARGEST_RUN.nodes,
+        edges: LARGEST_RUN.edges,
+      });
+      expect(seconds).toBeLessThan(90);
+
+      const counts = await h.admin.query<{ nodes: number; edges: number }>(
+        `SELECT (SELECT count(*) FROM graph_nodes WHERE run_id = $1)::int AS nodes,
+                (SELECT count(*) FROM graph_edges WHERE run_id = $1)::int AS edges`,
+        [runId],
+      );
+      expect(counts.rows[0]).toEqual({ nodes: LARGEST_RUN.nodes, edges: LARGEST_RUN.edges });
 
       const again = await save(a, { runId, projectId: a.projectId, facts });
       expect(again).toEqual({ ...saved, duplicate: true });

@@ -221,7 +221,7 @@ export interface ReachedFile {
  * It walks one level at a time, with a lookup by node number for each, and not as one recursive
  * query: a recursive query is planned before it runs, and for a table that has no statistics yet
  * (just after a large run was stored) the plan was a scan of every edge of the run for every level,
- * 24 seconds for the largest graph that the analysis allows, against 26 milliseconds once the table
+ * 24 seconds for a graph of 20,000 files and 100,000 imports of files, against 26 milliseconds once the table
  * had been analysed. A walk does the same work whatever the planner knows, ends when the number of
  * files is reached and does not look at a file twice.
  *

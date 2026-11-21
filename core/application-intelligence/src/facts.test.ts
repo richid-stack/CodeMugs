@@ -351,6 +351,50 @@ describe("the facts schema", () => {
       const many = Array.from({ length: ANALYSIS_LIMITS.maxEnvVarFiles + 1 }, () => "src/a.ts");
       expect(accepts(changed([["envVars", 0, "files"], many]))).toBe(false);
     });
+
+    describe("dependencies, over all the packages together", () => {
+      /** `total` dependencies, in packages of a thousand, each well within the limit of one package. */
+      function packagesWith(total: number): unknown[] {
+        const perPackage = 1_000;
+        expect(perPackage).toBeLessThan(ANALYSIS_LIMITS.maxDependenciesPerPackage);
+        return Array.from({ length: Math.ceil(total / perPackage) }, (_, index) => ({
+          directory: `p${String(index)}`,
+          dependencies: Array.from(
+            { length: Math.min(perPackage, total - index * perPackage) },
+            (_, number) => ({
+              name: `d${String(index)}-${String(number)}`,
+              kind: "runtime",
+              source: "registry",
+            }),
+          ),
+          scripts: [],
+        }));
+      }
+
+      it("accepts exactly the limit", () => {
+        const packages = packagesWith(ANALYSIS_LIMITS.maxDependencies);
+        expect(accepts(changed([["packages"], packages]))).toBe(true);
+      });
+
+      it("refuses one more than the limit, though every package is within its own, and says where", () => {
+        const packages = packagesWith(ANALYSIS_LIMITS.maxDependencies + 1);
+        const result = repositoryFactsSchema.safeParse(changed([["packages"], packages]));
+        expect(result.success).toBe(false);
+        expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["packages"]);
+      });
+
+      it("is refused by parseRepositoryFacts as a fault of the packages and of nothing else", () => {
+        const packages = packagesWith(ANALYSIS_LIMITS.maxDependencies + 1);
+        const text = JSON.stringify(changed([["packages"], packages]));
+        try {
+          parseRepositoryFacts(text);
+          expect.unreachable("it should have been refused");
+        } catch (error) {
+          expect(error).toBeInstanceOf(FactsRejected);
+          expect((error as FactsRejected).paths).toEqual(["packages"]);
+        }
+      });
+    });
   });
 });
 

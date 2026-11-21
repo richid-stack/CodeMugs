@@ -24,6 +24,12 @@ export const ANALYSIS_LIMITS = Object.freeze({
   maxEnvVarFiles: 20,
   maxPackages: 1_000,
   maxDependenciesPerPackage: 2_000,
+  /**
+   * Dependencies over all the packages together. The two limits above allow two million, which is a
+   * graph that cannot be built in a test's memory, and each dependency is a node and an edge of the
+   * graph. This keeps the largest answer to the size that was measured (ADR 0026).
+   */
+  maxDependencies: 100_000,
   maxScriptsPerPackage: 200,
   maxFrameworks: 200,
   /** Files named for one framework. */

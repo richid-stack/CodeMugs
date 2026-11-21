@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyse } from "./analyse.js";
+import { ANALYSIS_LIMITS } from "./constants.js";
 import { parseRepositoryFacts } from "./facts.js";
 import type { AnalysisSource } from "./source.js";
 import { memorySource } from "./source.js";
@@ -391,6 +392,86 @@ describe("analyse, when something is cut short", () => {
     );
     expect(facts.packages.map((entry) => entry.directory)).toEqual(["a", "b"]);
     expect(facts.limits.truncated).toEqual(["packages"]);
+  });
+
+  describe("dependencies", () => {
+    const manifest = (...names: string[]): string =>
+      JSON.stringify({ dependencies: Object.fromEntries(names.map((name) => [name, "1.0.0"])) });
+    const kept = (facts: Awaited<ReturnType<typeof analyse>>): string[] =>
+      facts.packages.flatMap((entry) =>
+        entry.dependencies.map((dependency) => `${entry.directory}:${dependency.name}`),
+      );
+
+    it("keeps no more than the limit over all the packages together, and says so", async () => {
+      const facts = await run(
+        { "a/package.json": manifest("x", "y"), "b/package.json": manifest("x", "y") },
+        { limits: { maxDependencies: 3 } },
+      );
+      expect(kept(facts)).toEqual(["a:x", "a:y", "b:x"]);
+      expect(facts.packages.map((entry) => entry.directory)).toEqual(["a", "b"]);
+      expect(facts.limits.truncated).toEqual(["packages"]);
+    });
+
+    it("says nothing when the dependencies are as many as the limit and no more", async () => {
+      const facts = await run(
+        { "a/package.json": manifest("x", "y"), "b/package.json": manifest("x", "y") },
+        { limits: { maxDependencies: 4 } },
+      );
+      expect(kept(facts)).toHaveLength(4);
+      expect(facts.limits.truncated).toEqual([]);
+    });
+
+    it("keeps a package that has no room left for its dependencies", async () => {
+      const facts = await run(
+        { "a/package.json": manifest("x"), "b/package.json": manifest("y") },
+        { limits: { maxDependencies: 1 } },
+      );
+      expect(facts.packages.map((entry) => entry.directory)).toEqual(["a", "b"]);
+      expect(kept(facts)).toEqual(["a:x"]);
+      expect(facts.limits.truncated).toEqual(["packages"]);
+    });
+
+    it("names no framework from a dependency that it did not keep", async () => {
+      const facts = await run(
+        {
+          "a/package.json": manifest("express"),
+          "b/package.json": manifest("react"),
+        },
+        { limits: { maxDependencies: 1 } },
+      );
+      expect(facts.frameworks.map((entry) => entry.name)).toEqual(["express"]);
+    });
+
+    it("says so when one package has more dependencies than a package may keep", async () => {
+      const facts = await run(
+        { "package.json": manifest("a", "b", "c") },
+        { limits: { maxDependenciesPerPackage: 2 } },
+      );
+      expect(kept(facts)).toEqual([".:a", ".:b"]);
+      expect(facts.limits.truncated).toEqual(["packages"]);
+    });
+
+    it("does not count the dependencies of a manifest that was not read", async () => {
+      const facts = await run(
+        { "a/package.json": "{ not json", "b/package.json": manifest("x", "y") },
+        { limits: { maxDependencies: 2 } },
+      );
+      expect(kept(facts)).toEqual(["b:x", "b:y"]);
+      expect(facts.limits.truncated).toEqual([]);
+    });
+
+    it("stops at the limit of the host's schema, and the host accepts what it says", async () => {
+      // 1,000 manifests of 150 dependencies are 150,000, which is over the limit of 100,000.
+      const contents: Record<string, string> = {};
+      const names = Array.from({ length: 150 }, (_, index) => `dep-${String(index)}`);
+      for (let index = 0; index < 1_000; index += 1) {
+        contents[`pkg/p${String(index).padStart(4, "0")}/package.json`] = manifest(...names);
+      }
+      const facts = await run(contents);
+      expect(kept(facts)).toHaveLength(ANALYSIS_LIMITS.maxDependencies);
+      expect(facts.packages).toHaveLength(1_000);
+      expect(facts.limits.truncated).toEqual(["packages"]);
+    });
   });
 
   it("says so when there are more frameworks than it keeps", async () => {

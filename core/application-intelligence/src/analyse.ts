@@ -79,6 +79,8 @@ export async function analyse(
   >();
   let bytesRead = 0;
   let filesParsed = 0;
+  /** The dependencies of the packages that are kept, which the limit over all of them counts. */
+  let dependencyCount = 0;
 
   const addFramework = (name: string, evidence: FrameworkFact["evidence"], file: string): void => {
     const category = KNOWN_FRAMEWORKS[name];
@@ -130,14 +132,22 @@ export async function analyse(
     if (isManifest) {
       const directory =
         file.path === "package.json" ? "." : file.path.slice(0, -"/package.json".length);
-      const fact = extractPackage(directory, text, limits);
-      if (fact === null) {
+      const extracted = extractPackage(
+        directory,
+        text,
+        limits,
+        limits.maxDependencies - dependencyCount,
+      );
+      if (extracted === null) {
         skips.parseFailed += 1;
       } else if (packages.length >= limits.maxPackages) {
         truncated.add("packages");
       } else {
-        packages.push(fact);
-        for (const dependency of fact.dependencies) {
+        // A package that has no room left is kept without its dependencies, and says so.
+        if (extracted.cut) truncated.add("packages");
+        packages.push(extracted.fact);
+        dependencyCount += extracted.fact.dependencies.length;
+        for (const dependency of extracted.fact.dependencies) {
           addFramework(dependency.name, "dependency", file.path);
         }
       }

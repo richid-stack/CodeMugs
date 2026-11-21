@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { buildGraph } from "./build.js";
 import { GraphError } from "./errors.js";
 import type { BuiltGraph } from "./model.js";
-import { importOf, makeFacts, packageOf, shopFacts } from "./test-harness.js";
+import {
+  LARGEST_RUN,
+  importOf,
+  largestFacts,
+  makeFacts,
+  packageOf,
+  shopFacts,
+} from "./test-harness.js";
 
 /** The node with this kind and key, or a failure that says which is missing. */
 function node(graph: BuiltGraph, kind: string, key: string) {
@@ -610,7 +617,7 @@ describe("buildGraph with facts that cannot be trusted", () => {
     expect(built.edges).toEqual([]);
   });
 
-  it("is quick for a repository of the largest size that the analysis allows", () => {
+  it("is quick for 20,000 files and 100,000 imports of files", () => {
     const paths = Array.from({ length: 20_000 }, (_, index) => `src/m${String(index)}.ts`);
     const imports = Array.from({ length: 100_000 }, (_, index) =>
       importOf(
@@ -626,5 +633,18 @@ describe("buildGraph with facts that cannot be trusted", () => {
     const seconds = (performance.now() - started) / 1000;
     expect(built.nodes).toHaveLength(20_000);
     expect(seconds).toBeLessThan(10);
+  });
+
+  it("is quick for the largest answer that the analysis can give, with every list at its limit", () => {
+    const facts = largestFacts();
+    const started = performance.now();
+    const built = buildGraph(facts);
+    const seconds = (performance.now() - started) / 1000;
+    // Nothing in the answer is the same as anything else, so this is the most that a run can have.
+    expect(built.nodes).toHaveLength(LARGEST_RUN.nodes);
+    expect(built.edges).toHaveLength(LARGEST_RUN.edges);
+    // It takes a couple of seconds. A limit of this size is there to find a cost that grows with the
+    // square of the answer, which takes minutes, and not to measure the machine.
+    expect(seconds).toBeLessThan(20);
   });
 });

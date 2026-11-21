@@ -230,6 +230,17 @@ export const repositoryFactsSchema = factsObject.superRefine((facts, context) =>
       });
     }
   }
+  // The limit of one package and the limit of packages allow two million dependencies together,
+  // twenty times what a graph is measured for, so the total is bounded as well.
+  let dependencies = 0;
+  for (const entry of facts.packages) dependencies += entry.dependencies.length;
+  if (dependencies > ANALYSIS_LIMITS.maxDependencies) {
+    context.addIssue({
+      code: "custom",
+      path: ["packages"],
+      message: "more dependencies than the limit allows",
+    });
+  }
   if (facts.limits.filesListed !== facts.files.length) {
     context.addIssue({
       code: "custom",

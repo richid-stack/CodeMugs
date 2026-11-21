@@ -72,7 +72,7 @@ describe("extractPackage", () => {
   };
 
   it("reads the name, the version, the module type, the dependencies and the names of scripts", () => {
-    const fact = extractPackage("packages/thing", JSON.stringify(manifest), limits);
+    const fact = extractPackage("packages/thing", JSON.stringify(manifest), limits)?.fact;
     expect(fact).toEqual({
       directory: "packages/thing",
       name: "@scope/thing",
@@ -92,7 +92,7 @@ describe("extractPackage", () => {
   });
 
   it("never keeps what a script runs, or the text of a source that can hold a token", () => {
-    const text = JSON.stringify(extractPackage(".", JSON.stringify(manifest), limits));
+    const text = JSON.stringify(extractPackage(".", JSON.stringify(manifest), limits)?.fact);
     expect(text).not.toContain("secret-build");
     expect(text).not.toContain("tsc &&");
     expect(text).not.toContain("tok@");
@@ -118,7 +118,7 @@ describe("extractPackage", () => {
         devDependencies: "text",
       }),
       limits,
-    );
+    )?.fact;
     expect(fact).toEqual({
       directory: ".",
       dependencies: [{ name: "good", kind: "runtime", source: "registry", range: "1.0.0" }],
@@ -131,7 +131,7 @@ describe("extractPackage", () => {
       ".",
       JSON.stringify({ name: "UPPER", scripts: { "bad script": "x", fine: "y", "a\nb": "z" } }),
       limits,
-    );
+    )?.fact;
     expect(fact?.name).toBeUndefined();
     expect(fact?.scripts).toEqual(["fine"]);
   });
@@ -148,7 +148,7 @@ describe("extractPackage", () => {
       ".",
       JSON.stringify({ dependencies, devDependencies: dependencies, scripts }),
       small,
-    );
+    )?.fact;
     expect(fact?.dependencies).toHaveLength(4);
     expect(fact?.dependencies.every((dependency) => dependency.kind === "runtime")).toBe(true);
     expect(fact?.scripts).toEqual(["script-0", "script-1", "script-2"]);
@@ -159,8 +159,91 @@ describe("extractPackage", () => {
       ".",
       '{"dependencies":{"__proto__":"1.0.0","constructor":"1.0.0","ok":"1.0.0"}}',
       limits,
-    );
+    )?.fact;
     expect(Object.getPrototypeOf({})).toBe(Object.prototype);
     expect(fact?.dependencies.map((dependency) => dependency.name)).toEqual(["constructor", "ok"]);
+  });
+  describe("when it leaves a dependency out because of a limit", () => {
+    const dependencies = (count: number): Record<string, string> =>
+      Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [`dep-${String(index)}`, "1.0.0"]),
+      );
+    const text = (count: number): string => JSON.stringify({ dependencies: dependencies(count) });
+
+    it("says so, and keeps the first of them in the order of the manifest's sorted names", () => {
+      const small = resolveLimits({ maxDependenciesPerPackage: 3 });
+      const result = extractPackage(".", text(5), small);
+      expect(result?.cut).toBe(true);
+      expect(result?.fact.dependencies.map((dependency) => dependency.name)).toEqual([
+        "dep-0",
+        "dep-1",
+        "dep-2",
+      ]);
+    });
+
+    it("does not say so when the dependencies are as many as the limit and no more", () => {
+      const small = resolveLimits({ maxDependenciesPerPackage: 3 });
+      expect(extractPackage(".", text(3), small)?.cut).toBe(false);
+      expect(extractPackage(".", text(2), small)?.cut).toBe(false);
+      expect(extractPackage(".", text(4), small)?.cut).toBe(true);
+    });
+
+    it("does not say so for an entry that it would have left out anyway", () => {
+      const small = resolveLimits({ maxDependenciesPerPackage: 1 });
+      const result = extractPackage(
+        ".",
+        JSON.stringify({ dependencies: { good: "1.0.0", "Bad Name": "1.0.0", number: 1 } }),
+        small,
+      );
+      expect(result?.cut).toBe(false);
+      expect(result?.fact.dependencies).toHaveLength(1);
+    });
+
+    it("says so when the dependencies of a later kind are the ones that do not fit", () => {
+      const small = resolveLimits({ maxDependenciesPerPackage: 2 });
+      const result = extractPackage(
+        ".",
+        JSON.stringify({
+          dependencies: { a: "1.0.0", b: "1.0.0" },
+          devDependencies: { c: "1.0.0" },
+        }),
+        small,
+      );
+      expect(result?.cut).toBe(true);
+      expect(result?.fact.dependencies.map((dependency) => dependency.name)).toEqual(["a", "b"]);
+    });
+
+    it("keeps no more than the room it is given, which is the part of the total that is left", () => {
+      const result = extractPackage(".", text(5), limits, 2);
+      expect(result?.cut).toBe(true);
+      expect(result?.fact.dependencies.map((dependency) => dependency.name)).toEqual([
+        "dep-0",
+        "dep-1",
+      ]);
+      expect(extractPackage(".", text(5), limits, 5)?.cut).toBe(false);
+    });
+
+    it("keeps the package, with none of its dependencies, when there is no room at all", () => {
+      const result = extractPackage(
+        ".",
+        JSON.stringify({ name: "kept", dependencies: { a: "1" } }),
+        limits,
+        0,
+      );
+      expect(result?.cut).toBe(true);
+      expect(result?.fact).toEqual({ directory: ".", name: "kept", dependencies: [], scripts: [] });
+    });
+
+    it("is held to the limit over all the packages when it is given no room", () => {
+      const small = resolveLimits({ maxDependencies: 2 });
+      const result = extractPackage(".", text(5), small);
+      expect(result?.cut).toBe(true);
+      expect(result?.fact.dependencies).toHaveLength(2);
+    });
+
+    it("is never more than the limit of one package, whatever the room", () => {
+      const small = resolveLimits({ maxDependenciesPerPackage: 2 });
+      expect(extractPackage(".", text(5), small, 100)?.fact.dependencies).toHaveLength(2);
+    });
   });
 });
