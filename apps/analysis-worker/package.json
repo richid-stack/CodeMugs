@@ -1,0 +1,35 @@
+{
+  "name": "@codemugs/analysis-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@codemugs/application-intelligence": "workspace:*",
+    "@codemugs/archive": "workspace:*",
+    "@codemugs/github": "workspace:*",
+    "@codemugs/jobs": "workspace:*",
+    "@codemugs/repository-analysis": "workspace:*",
+    "@codemugs/storage": "workspace:*",
+    "@codemugs/system-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@codemugs/auth": "workspace:*"
+  }
+}
