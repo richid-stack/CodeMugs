@@ -19,6 +19,7 @@ The first section describes what the API does today. The second proposes convent
 - **Ingestion.** `POST /v1/events` takes a batch and returns a result for each event. The client-generated `eventId` is the idempotency key, per project, so a retried batch is safe. `202` means the batch was understood, `5xx` means retry. See [apps/api](../../apps/api/README.md).
 - **Stable error codes for bad bodies:** `invalid_json`, `payload_too_large`, `unsupported_media_type`, `invalid_request`, and the batch codes `body_not_an_object`, `events_missing`, `events_empty`, `too_many_events`.
 - **Authentication.** Every `/v1` route requires an API key as a bearer token. The key determines the organisation and project, and a tenant identifier in a header or the query string is ignored. All credential failures return the same `401`. A failure of the authentication system itself returns `500` or `503`, never `401`. Authenticated responses are `cache-control: no-store`. Details and gaps (no rate limiting yet) are in [apps/api](../../apps/api/README.md).
+- **Scopes.** A key has the scopes it was issued with (`events:write`, `analysis:read`, `analysis:write`) and a route that needs one answers `403 forbidden` to a key that lacks it, before the body is read; a key issued with none named may only send events. `GET /v1/whoami` shows them ([ADR 0033](../architecture/decisions/0033-api-key-scopes.md)).
 - **Security headers** via `@fastify/helmet`, and a request body size cap.
 
 ## Proposed

@@ -87,11 +87,47 @@ describeDatabase("the API against PostgreSQL", () => {
 
       const a = await whoami(built, keyA.key);
       expect(a.statusCode).toBe(200);
-      expect(a.json()).toEqual({ organisationId: orgA, projectId: projectA, apiKeyId: keyA.id });
+      expect(a.json()).toEqual({
+        organisationId: orgA,
+        projectId: projectA,
+        apiKeyId: keyA.id,
+        scopes: ["events:write"],
+      });
 
       const b = await whoami(built, keyB.key);
       expect(b.statusCode).toBe(200);
-      expect(b.json()).toEqual({ organisationId: orgB, projectId: projectB, apiKeyId: keyB.id });
+      expect(b.json()).toEqual({
+        organisationId: orgB,
+        projectId: projectB,
+        apiKeyId: keyB.id,
+        scopes: ["events:write"],
+      });
+    });
+
+    it("says what a key may do, and a key that may not send events is refused", async () => {
+      const { built } = await start(database.appUrl);
+      const reader = await issueApiKey(seed, orgA, projectA, {
+        name: "reader",
+        actor: SYSTEM,
+        scopes: ["analysis:read"],
+      });
+      const who = await whoami(built, reader.key);
+      expect(who.json()).toEqual({
+        organisationId: orgA,
+        projectId: projectA,
+        apiKeyId: reader.id,
+        scopes: ["analysis:read"],
+      });
+      const events = await built.app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { authorization: `Bearer ${reader.key}`, "content-type": "application/json" },
+        payload: { events: [] },
+      });
+      expect(events.statusCode).toBe(403);
+      // After the key is revoked it is refused as a key, not as a key without a scope.
+      await revokeApiKey(seed, orgA, reader.id, { actor: SYSTEM });
+      expect((await whoami(built, reader.key)).statusCode).toBe(401);
     });
 
     it("ignores every attempt to name a different tenant", async () => {
@@ -111,6 +147,7 @@ describeDatabase("the API against PostgreSQL", () => {
         organisationId: orgA,
         projectId: projectA,
         apiKeyId: keyA.id,
+        scopes: ["events:write"],
       });
     });
 

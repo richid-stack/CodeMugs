@@ -4,12 +4,15 @@ import { z } from "zod";
 import { generateApiKey, parseApiKey, secretMatches } from "./apiKey.js";
 import { recordAudit, type AuditActor } from "./audit.js";
 import { IdentityError } from "./errors.js";
+import { checkScopes, knownScopes, type ApiKeyScope } from "./scopes.js";
 
 /** Who a valid API key says is calling. This is the only source of tenant identity. */
 export interface Principal {
   organisationId: string;
   projectId: string;
   apiKeyId: string;
+  /** What the key may do. Checked by the route, which refuses what the key was not given. */
+  scopes: readonly ApiKeyScope[];
 }
 
 export interface IssuedApiKey {
@@ -91,29 +94,39 @@ export async function createProject(
  *
  * A project that does not exist and a project that belongs to another organisation give the
  * same error, so this cannot be used to find out which projects exist.
+ *
+ * What the key may do is given by `scopes` (ADR 0033): by default only to send events, which is
+ * what a key in an SDK needs. They cannot be changed afterwards; a key that needs more is revoked
+ * and replaced.
  */
 export async function issueApiKey(
   pool: Pool,
   organisationId: string,
   projectId: string,
-  options: { name: string; actor: AuditActor; requestId?: string },
+  options: {
+    name: string;
+    actor: AuditActor;
+    requestId?: string;
+    scopes?: readonly string[];
+  },
 ): Promise<IssuedApiKey> {
   const name = checkName(options.name);
+  const scopes = checkScopes(options.scopes);
   if (!idSchema.safeParse(projectId).success) throw new IdentityError("project_not_found");
 
   const generated = generateApiKey(organisationId);
   try {
     await withTenant(pool, organisationId, async (client) => {
       await client.query(
-        `INSERT INTO api_keys (id, organisation_id, project_id, name, secret_hash)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [generated.keyId, client.organisationId, projectId, name, generated.secretHash],
+        `INSERT INTO api_keys (id, organisation_id, project_id, name, secret_hash, scopes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [generated.keyId, client.organisationId, projectId, name, generated.secretHash, scopes],
       );
       await recordAudit(client, {
         actor: options.actor,
         action: "api_key.issued",
         target: { type: "api_key", id: generated.keyId },
-        metadata: { projectId },
+        metadata: { projectId, scopes: scopes.join(" ") },
         ...(options.requestId === undefined ? {} : { requestId: options.requestId }),
       });
     });
@@ -161,6 +174,7 @@ interface KeyRow {
   project_id: string;
   secret_hash: Buffer;
   revoked_at: Date | null;
+  scopes: unknown;
 }
 
 /**
@@ -182,7 +196,7 @@ export async function authenticateApiKey(
 
   const row = await withTenant(pool, parsed.organisationId, async (client) => {
     const result = await client.query<KeyRow>(
-      "SELECT organisation_id, project_id, secret_hash, revoked_at FROM api_keys WHERE id = $1",
+      "SELECT organisation_id, project_id, secret_hash, revoked_at, scopes FROM api_keys WHERE id = $1",
       [parsed.keyId],
     );
     return result.rows[0];
@@ -195,5 +209,6 @@ export async function authenticateApiKey(
     organisationId: row.organisation_id,
     projectId: row.project_id,
     apiKeyId: parsed.keyId,
+    scopes: knownScopes(row.scopes),
   };
 }

@@ -34,5 +34,6 @@
 | [0030](0030-long-jobs.md)                                          | Jobs that take long: the work runs with no transaction open                        | Accepted                          |
 | [0031](0031-connecting-a-repository-and-asking-for-an-analysis.md) | Connecting a repository and asking for an analysis: the API records, a worker does | Accepted                          |
 | [0032](0032-the-job-that-analyses-a-repository.md)                 | The job that analyses a repository                                                 | Accepted (the process is a draft) |
+| [0033](0033-api-key-scopes.md)                                     | API key scopes                                                                     | Accepted                          |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

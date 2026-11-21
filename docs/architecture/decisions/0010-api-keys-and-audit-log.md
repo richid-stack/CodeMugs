@@ -1,6 +1,6 @@
 # 0010. API keys and the audit log
 
-- **Status:** Accepted
+- **Status:** Accepted. Decision 4's "there are no scopes yet" is superseded by [ADR 0033](0033-api-key-scopes.md).
 - **Date:** 2026-11-08
 
 ## Context
@@ -46,4 +46,4 @@
 
 ## Revisit when
 
-Keys need scopes or expiry, operator access is decided, rate limiting or a secrets manager exists, or an external pooler is introduced.
+Keys need expiry (scopes are [ADR 0033](0033-api-key-scopes.md)), operator access is decided, rate limiting or a secrets manager exists, or an external pooler is introduced.

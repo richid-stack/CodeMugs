@@ -1,6 +1,6 @@
 # @codemugs/api
 
-The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and two endpoints behind it: `GET /v1/whoami` and `POST /v1/events` (event ingestion). Nothing reads events back yet.
+The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and two endpoints behind it: `GET /v1/whoami` and `POST /v1/events` (event ingestion, for keys with the `events:write` scope). Nothing reads events back yet.
 
 **Status:** Phase 1 · Foundation (started)
 
@@ -10,8 +10,8 @@ The control plane's HTTP API. Health endpoints, API key authentication for every
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /healthz`    | Liveness. The process is up. Never checks dependencies, so a database outage cannot trigger restarts                                                       |
 | `GET /readyz`     | Readiness. Runs registered dependency checks with timeouts and returns `503` if any fail or shutdown has begun. Failure details are logged, never returned |
-| `GET /v1/whoami`  | Requires an API key. Returns the `organisationId`, `projectId` and `apiKeyId` the key belongs to, so an SDK can check a key without sending data           |
-| `POST /v1/events` | Requires an API key. Records a batch of 1 to 500 events and says what happened to each (see below)                                                         |
+| `GET /v1/whoami`  | Requires an API key. Returns the `organisationId`, `projectId`, `apiKeyId` and `scopes` of the key, so an SDK can check a key without sending data         |
+| `POST /v1/events` | Requires an API key with the `events:write` scope (ADR 0033). Records a batch of 1 to 500 events and says what happened to each (see below)                |
 
 ## Behaviour
 

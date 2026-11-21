@@ -72,7 +72,7 @@ export function registerV1Routes(
         hookDone();
       });
 
-      /** Who the credential belongs to. Lets an SDK check a key without sending any data. */
+      /** Who the credential belongs to and what it may do. Lets an SDK check a key without sending any data. */
       v1.get("/whoami", (request) => {
         const principal = request.principal;
         if (principal === null) {
@@ -83,6 +83,7 @@ export function registerV1Routes(
           organisationId: principal.organisationId,
           projectId: principal.projectId,
           apiKeyId: principal.apiKeyId,
+          scopes: principal.scopes,
         };
       });
 

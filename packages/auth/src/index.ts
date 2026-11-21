@@ -12,3 +12,5 @@ export {
   revokeApiKey,
 } from "./identity.js";
 export type { IssuedApiKey, Principal } from "./identity.js";
+export { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES, checkScopes } from "./scopes.js";
+export type { ApiKeyScope } from "./scopes.js";
