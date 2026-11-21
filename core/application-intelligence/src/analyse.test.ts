@@ -451,6 +451,15 @@ describe("analyse, when something is cut short", () => {
       expect(facts.limits.truncated).toEqual(["packages"]);
     });
 
+    it("does not let a limit that is a fraction admit one dependency more", async () => {
+      const facts = await run(
+        { "a/package.json": manifest("x"), "b/package.json": manifest("y") },
+        { limits: { maxDependencies: 1.5 } },
+      );
+      expect(kept(facts)).toEqual(["a:x"]);
+      expect(facts.limits.truncated).toEqual(["packages"]);
+    });
+
     it("does not count the dependencies of a manifest that was not read", async () => {
       const facts = await run(
         { "a/package.json": "{ not json", "b/package.json": manifest("x", "y") },

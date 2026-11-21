@@ -234,6 +234,15 @@ describe("extractPackage", () => {
       expect(result?.fact).toEqual({ directory: ".", name: "kept", dependencies: [], scripts: [] });
     });
 
+    it("takes a fraction of room for no room, and rounds a limit that is a fraction down", () => {
+      const result = extractPackage(".", text(5), limits, 0.5);
+      expect(result?.cut).toBe(true);
+      expect(result?.fact.dependencies).toEqual([]);
+      expect(extractPackage(".", text(5), limits, 2.9)?.fact.dependencies).toHaveLength(2);
+      const fraction = resolveLimits({ maxDependenciesPerPackage: 1.5 });
+      expect(extractPackage(".", text(5), fraction)?.fact.dependencies).toHaveLength(1);
+    });
+
     it("is held to the limit over all the packages when it is given no room", () => {
       const small = resolveLimits({ maxDependencies: 2 });
       const result = extractPackage(".", text(5), small);

@@ -68,7 +68,9 @@ export function extractPackage(
   }
   if (!isRecord(json)) return null;
 
-  const ceiling = Math.min(limits.maxDependenciesPerPackage, room);
+  // A limit may be given as a fraction (`resolveLimits` takes any number that is not negative), and
+  // what is left of one is then a fraction too: 0.5 of room is no room for a dependency.
+  const ceiling = Math.floor(Math.min(limits.maxDependenciesPerPackage, room));
   const dependencies: DependencyFact[] = [];
   let cut = false;
   for (const [field, kind] of DEPENDENCY_FIELDS) {
