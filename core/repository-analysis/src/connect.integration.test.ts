@@ -61,7 +61,12 @@ describeDatabase("connecting a project to a repository", () => {
   });
 
   it("says that a project that is connected already cannot be connected again", async () => {
-    expect(await analysisErrorCode(connect(a))).toBe("connection_exists");
+    const tenant = await h.tenant("twice");
+    await h.bindInstallation(tenant.organisationId, 5_001);
+    await connect(tenant, {}, 5_001);
+    expect(await analysisErrorCode(connect(tenant, { name: "other" }, 5_001))).toBe(
+      "connection_exists",
+    );
   });
 
   it("leaves a project that has no connection with none", async () => {
@@ -96,13 +101,17 @@ describeDatabase("connecting a project to a repository", () => {
   });
 
   it("reads only its own organisation's connections", async () => {
-    await connect(b, {}, INSTALLATION_B);
-    const seen = await withTenant(h.app, a.organisationId, (client) =>
+    const [x, y] = [await h.tenant("reads-x"), await h.tenant("reads-y")];
+    await h.bindInstallation(x.organisationId, 5_002);
+    await h.bindInstallation(y.organisationId, 5_003);
+    await connect(x, {}, 5_002);
+    await connect(y, {}, 5_003);
+    const seen = await withTenant(h.app, x.organisationId, (client) =>
       client.query("SELECT organisation_id FROM repository_connections"),
     );
-    expect(seen.rows.every((row) => row.organisation_id === a.organisationId)).toBe(true);
+    expect(seen.rows).toEqual([{ organisation_id: x.organisationId }]);
     expect(
-      await withTenant(h.app, a.organisationId, (client) => getConnection(client, b.projectId)),
+      await withTenant(h.app, x.organisationId, (client) => getConnection(client, y.projectId)),
     ).toBeUndefined();
   });
 

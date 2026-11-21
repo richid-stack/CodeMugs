@@ -5,6 +5,7 @@ import { connectRepository } from "./connect.js";
 import { ANALYSE_JOB_ATTEMPTS, ANALYSE_JOB_KIND } from "./constants.js";
 import {
   analysisErrorCode,
+  databaseErrorCode,
   describeDatabase,
   startHarness,
   type Harness,
@@ -46,6 +47,29 @@ describeDatabase("asking for an analysis, and how it is going", () => {
     await h.close();
   });
 
+  /** An organisation with two projects, each connected to a repository of its own. */
+  let pairs = 0;
+  const twoConnected = async (): Promise<Tenant> => {
+    pairs += 1;
+    const tenant = await h.tenant(`pair-${String(pairs)}`);
+    const installationId = 40 + pairs;
+    await h.bindInstallation(tenant.organisationId, installationId);
+    await withTenant(h.app, tenant.organisationId, async (client) => {
+      await connectRepository(client, {
+        projectId: tenant.projectId,
+        installationId,
+        owner: "acme",
+        name: "first",
+      });
+      await connectRepository(client, {
+        projectId: tenant.otherProjectId,
+        installationId,
+        owner: "acme",
+        name: "second",
+      });
+    });
+    return tenant;
+  };
   const ask = (tenant: Tenant, projectId = tenant.projectId, ref = "main") =>
     withTenant(h.app, tenant.organisationId, (client) =>
       requestAnalysis(client, { projectId, ref }),
@@ -131,6 +155,29 @@ describeDatabase("asking for an analysis, and how it is going", () => {
     });
   });
 
+  describe("what the application role may write itself", () => {
+    it("cannot pair a project with the connection of another project of its organisation", async () => {
+      const d = await twoConnected();
+      const connections = await h.admin.query<{ id: string; project_id: string }>(
+        "SELECT id, project_id FROM repository_connections WHERE organisation_id = $1",
+        [d.organisationId],
+      );
+      const ofOther = connections.rows.find((row) => row.project_id === d.otherProjectId);
+      const ofThis = connections.rows.find((row) => row.project_id === d.projectId);
+      const insert = (projectId: string, connectionId: string | undefined) =>
+        withTenant(h.app, d.organisationId, (client) =>
+          client.query(
+            `INSERT INTO analysis_requests (organisation_id, id, project_id, connection_id, ref)
+             VALUES ($1, $2, $3, $4, 'main')`,
+            [d.organisationId, randomUUID(), projectId, connectionId],
+          ),
+        );
+      expect(await databaseErrorCode(insert(d.projectId, ofOther?.id))).toBe("23503");
+      // The same insert with the project's own connection is accepted, so it is the pairing that is refused.
+      await expect(insert(d.projectId, ofThis?.id)).resolves.toMatchObject({ rowCount: 1 });
+    });
+  });
+
   describe("readAnalysisPlan", () => {
     it("says which repository to read, and at what ref", async () => {
       const { requestId } = await ask(a, a.projectId, "release/1");
@@ -148,22 +195,7 @@ describeDatabase("asking for an analysis, and how it is going", () => {
     });
 
     it("says the repository of the request's own project when an organisation has several", async () => {
-      const d = await h.tenant("D");
-      await h.bindInstallation(d.organisationId, 44);
-      await withTenant(h.app, d.organisationId, async (client) => {
-        await connectRepository(client, {
-          projectId: d.projectId,
-          installationId: 44,
-          owner: "acme",
-          name: "first",
-        });
-        await connectRepository(client, {
-          projectId: d.otherProjectId,
-          installationId: 44,
-          owner: "acme",
-          name: "second",
-        });
-      });
+      const d = await twoConnected();
       const first = await ask(d, d.projectId);
       const second = await ask(d, d.otherProjectId);
       const plans = await withTenant(h.app, d.organisationId, async (client) => [

@@ -47,6 +47,9 @@ CREATE TABLE repository_connections (
   PRIMARY KEY (organisation_id, id),
   -- One repository for each project, for now. Several would need a run to say which one it is of.
   UNIQUE (organisation_id, project_id),
+  -- So that a request can name a connection and its project together, and have the database check
+  -- that the connection is that project's.
+  UNIQUE (organisation_id, project_id, id),
   FOREIGN KEY (organisation_id, project_id) REFERENCES projects (organisation_id, id) ON DELETE RESTRICT,
   -- The installation must be one of this organisation's: the key carries both.
   FOREIGN KEY (organisation_id, installation_id)
@@ -65,7 +68,11 @@ CREATE TABLE analysis_requests (
   created_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (organisation_id, id),
   FOREIGN KEY (organisation_id, project_id) REFERENCES projects (organisation_id, id) ON DELETE RESTRICT,
-  FOREIGN KEY (organisation_id, connection_id) REFERENCES repository_connections (organisation_id, id) ON DELETE RESTRICT
+  -- The connection is the project's own. Two separate keys would let a request pair one project with
+  -- another project's repository, and the worker would store that repository's graph as this
+  -- project's.
+  FOREIGN KEY (organisation_id, project_id, connection_id)
+    REFERENCES repository_connections (organisation_id, project_id, id) ON DELETE RESTRICT
 );
 
 -- "The requests of a project, newest first" is the question that is asked.
