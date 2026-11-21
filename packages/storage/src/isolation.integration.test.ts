@@ -443,6 +443,9 @@ describeDatabase("the isolation checks themselves (canary)", () => {
       );
       CREATE TABLE audit_log (id int PRIMARY KEY, organisation_id uuid NOT NULL);
       GRANT SELECT, INSERT, UPDATE ON audit_log TO ${APP_ROLE};
+      -- A table that an operator writes, which a tenant can write too.
+      CREATE TABLE github_installations (id int PRIMARY KEY, organisation_id uuid NOT NULL);
+      GRANT SELECT, INSERT ON github_installations TO ${APP_ROLE};
 
       -- Mistakes in how the cross-tenant dispatcher is set up (ADR 0012).
       GRANT SELECT ON leaky TO ${DISPATCHER_ROLE};
@@ -489,6 +492,7 @@ describeDatabase("the isolation checks themselves (canary)", () => {
         "unique index leaky_note_unique on leaky does not include organisation_id",
         "foreign key child_leaky_id_fkey from child to leaky does not include organisation_id on both sides",
         `table audit_log is append-only but ${APP_ROLE} can update or delete it`,
+        `table github_installations is written by an operator but ${APP_ROLE} can insert, update or delete it`,
         `${DISPATCHER_ROLE} has privileges on table leaky, which is not a job table`,
         `policy sees_all on no_tenant_column lets ${DISPATCHER_ROLE} see rows across tenants`,
         `policy everyone on jobs shares ${DISPATCHER_ROLE}'s cross-tenant access with another role`,
