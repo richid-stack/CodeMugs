@@ -38,7 +38,7 @@ It holds **no file content and no secret**. A dependency from git, a URL or a fi
 - A route that is matched by a regular expression or built from variables is not found. A route found by comparing a request's method and path is a `heuristic`.
 - Imports are resolved by relative path and by the extension swaps of TypeScript, and not through `tsconfig` paths, `exports` or workspaces.
 - `node_modules`, `.git`, `dist`, `build`, `coverage`, `.next`, `.turbo`, `.cache` and `.codemugs` are not read, and symbolic links are never followed.
-- Limits on files, bytes, imports, routes and time are in `ANALYSIS_LIMITS`. A caller can lower them and never raise them, and `limits.truncated` says what was cut short.
+- Limits on files, bytes, imports, dependencies (over all the packages), routes and time are in `ANALYSIS_LIMITS`. A caller can lower them and never raise them, and `limits.truncated` says what was cut short.
 
 ## Working here
 

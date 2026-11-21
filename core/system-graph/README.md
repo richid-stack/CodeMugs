@@ -30,7 +30,7 @@ The tables are `analysis_runs`, `graph_nodes` and `graph_edges` ([migration 0006
 
 ## What is and is not shown
 
-Tested locally against PostgreSQL 16 (CI runs 17 and 18): a tenant cannot read, write or point into another tenant's graph, the same run id in two organisations is two runs, a run is whole or absent, the tables cannot be changed, and the largest graph the analysis allows (20,000 files, 100,000 imports) is stored in a few seconds. It is **not** shown that nothing leaks under an attack on the database role itself, and nothing here is evidence for a release gate. Retention, deletion and what reads the graph are not built. See the ADR for what is not decided.
+Tested locally against PostgreSQL 16 (CI runs 17 and 18): a tenant cannot read, write or point into another tenant's graph, the same run id in two organisations is two runs, a run is whole or absent, the tables cannot be changed, a graph of 20,000 files and 100,000 imports of files is stored in a few seconds, and the largest that the schema allows (228,200 nodes and 269,000 edges, about 133 MB) in about twelve, in the sandbox here. It is **not** shown that nothing leaks under an attack on the database role itself, and nothing here is evidence for a release gate. Retention, deletion and what reads the graph are not built. See the ADR for what is not decided.
 
 ## Tests
 

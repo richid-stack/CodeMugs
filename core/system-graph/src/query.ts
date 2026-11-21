@@ -212,10 +212,6 @@ export interface ReachedFile {
   readonly depth: number;
 }
 
-/** Code unit order, which is how the builder orders names, and does not depend on a locale. */
-const byKey = (a: { key: string }, b: { key: string }): number =>
-  a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-
 /**
  * The files that a file reaches through imports of one file by another, nearest first, and in the
  * order of their paths within one depth. A cycle ends (a file is given once, at its nearest depth,
@@ -225,9 +221,14 @@ const byKey = (a: { key: string }, b: { key: string }): number =>
  * It walks one level at a time, with a lookup by node number for each, and not as one recursive
  * query: a recursive query is planned before it runs, and for a table that has no statistics yet
  * (just after a large run was stored) the plan was a scan of every edge of the run for every level,
- * 24 seconds for the largest graph that the analysis allows, against 26 milliseconds once the table
+ * 24 seconds for a graph of 20,000 files and 100,000 imports of files, against 26 milliseconds once the table
  * had been analysed. A walk does the same work whatever the planner knows, ends when the number of
  * files is reached and does not look at a file twice.
+ *
+ * A level brings back the records of the files that it gives and of no others. It asks for the
+ * files of the level in the order of their node numbers, which the builder gives in the order of
+ * their paths, and for no more than the limit still has room for. So a file that every other file
+ * imports costs a limit of three three records, and not one for each of thousands.
  */
 export async function importClosure(
   client: TenantClient,
@@ -267,15 +268,18 @@ export async function importClosure(
     if (fresh.length === 0) break;
     for (const node of fresh) seen.add(node);
 
+    // Only a file imports, so what is not a file is the end of a path. When the level has more files
+    // than there is room for, the limit is reached with it and the walk ends, so the rest are not
+    // needed, and not fetched.
     const nodes = await client.query<NodeRow>(
       `SELECT id, kind, key, attributes FROM graph_nodes
-        WHERE organisation_id = $1 AND run_id = $2 AND id = ANY($3::int[])`,
-      [client.organisationId, run, fresh],
+        WHERE organisation_id = $1 AND run_id = $2 AND kind = 'file' AND id = ANY($3::int[])
+        ORDER BY id
+        LIMIT $4`,
+      [client.organisationId, run, fresh, limit - reached.length],
     );
-    // Only a file imports, so what is not a file is the end of a path.
-    const files = nodes.rows.filter((row) => row.kind === "file").sort(byKey);
-    for (const row of files) reached.push({ node: toNode(row), depth: level });
-    frontier = files.map((row) => row.id);
+    for (const row of nodes.rows) reached.push({ node: toNode(row), depth: level });
+    frontier = nodes.rows.map((row) => row.id);
   }
-  return reached.slice(0, limit);
+  return reached;
 }
