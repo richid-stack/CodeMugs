@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import type { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { TenantContextError } from "./errors.js";
@@ -14,7 +15,9 @@ function fakePool(options: { failRollback?: boolean } = {}) {
   const queries: Recorded[] = [];
   const released: unknown[] = [];
   let connects = 0;
-  const client = {
+  // A connection is an event emitter: it says `error` when the database ends the session, and a
+  // connection that is checked out has no listener unless whoever checked it out put one there.
+  const client = Object.assign(new EventEmitter(), {
     query(text: string, values?: unknown[]): Promise<unknown> {
       queries.push({ text, values });
       if (text === "ROLLBACK" && options.failRollback === true) {
@@ -25,14 +28,14 @@ function fakePool(options: { failRollback?: boolean } = {}) {
     release(argument?: unknown): void {
       released.push(argument);
     },
-  };
+  });
   const pool = {
     connect(): Promise<typeof client> {
       connects += 1;
       return Promise.resolve(client);
     },
   } as unknown as Pool;
-  return { pool, queries, released, connects: () => connects };
+  return { pool, queries, released, client, connects: () => connects };
 }
 
 describe("withTenant", () => {
@@ -123,5 +126,63 @@ describe("withTenant", () => {
     expect(captured).toBeDefined();
     await expect(captured?.query("SELECT 1")).rejects.toBeInstanceOf(TenantContextError);
     expect(fake.queries.filter((q) => q.text === "SELECT 1")).toHaveLength(0);
+  });
+  describe("when the database ends the session in the middle of the work", () => {
+    // Without a listener, the connection's `error` event is an uncaught exception, which ends the
+    // process. This is what happens to a transaction that sits idle for longer than the database
+    // allows (SQLSTATE 25P03), and a job that waits for a download inside one would do it.
+    const ended = (): Error =>
+      Object.assign(new Error("terminating connection"), { code: "25P03" });
+
+    it("listens for an error on the connection while the work runs, and stops afterwards", async () => {
+      const fake = fakePool();
+      let during = -1;
+      await withTenant(fake.pool, randomUUID(), () => {
+        during = fake.client.listenerCount("error");
+        return Promise.resolve();
+      });
+      expect(during).toBe(1);
+      expect(fake.client.listenerCount("error")).toBe(0);
+    });
+
+    it("does not commit, throws the error of the connection, and discards the connection", async () => {
+      const fake = fakePool();
+      const error = ended();
+      const caught = await withTenant(fake.pool, randomUUID(), () => {
+        fake.client.emit("error", error);
+        return Promise.resolve("finished");
+      }).catch((thrown: unknown) => thrown);
+      expect(caught).toBe(error);
+      expect(fake.queries.map((query) => query.text)).not.toContain("COMMIT");
+      expect(fake.released).toEqual([true]);
+    });
+
+    it("throws the error of the connection and not the one that the work made of it", async () => {
+      const fake = fakePool();
+      const error = ended();
+      const caught = await withTenant(fake.pool, randomUUID(), () => {
+        fake.client.emit("error", error);
+        return Promise.reject(new Error("Client has encountered a connection error"));
+      }).catch((thrown: unknown) => thrown);
+      expect(caught).toBe(error);
+      expect(fake.released).toEqual([true]);
+    });
+
+    it("throws the first error of the connection, which is the cause", async () => {
+      const fake = fakePool();
+      const first = ended();
+      const caught = await withTenant(fake.pool, randomUUID(), () => {
+        fake.client.emit("error", first);
+        fake.client.emit("error", new Error("a later one"));
+        return Promise.resolve();
+      }).catch((thrown: unknown) => thrown);
+      expect(caught).toBe(first);
+    });
+
+    it("keeps the connection when nothing went wrong", async () => {
+      const fake = fakePool();
+      await withTenant(fake.pool, randomUUID(), () => Promise.resolve());
+      expect(fake.released).toEqual([false]);
+    });
   });
 });

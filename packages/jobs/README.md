@@ -9,6 +9,7 @@ A durable job queue in PostgreSQL, and a worker that runs the jobs. Background w
 - `enqueueJob(client, { kind, subjectId?, maxAttempts? })`: adds a job for the organisation the transaction acts for. Call it in the same transaction that wrote the work. Enqueueing the same `(kind, subjectId)` again returns `{ status: "exists" }`.
 - `requeueJob(client, { kind, subjectId })`: replay. Puts a succeeded or dead job back with fresh attempts. Refuses (returns `false`) a job that is waiting or running.
 - `runWorker({ dispatcher, app, handlers, signal, ... })`: takes jobs of the kinds it has handlers for, runs each in a transaction restricted to the job's tenant, and marks it succeeded in that same transaction. Retries with backoff, gives up after `max_attempts`, recovers jobs whose worker died, and stops gracefully when the signal aborts.
+- `longJob(handler)`: registers a job that takes long (a download, a sandbox, a model). It works with **no transaction open**, reads through `context.read(body)` (a short transaction, always as the job's organisation), and returns a commit that the worker runs, with the job's completion, in one transaction. See [ADR 0030](../../docs/architecture/decisions/0030-long-jobs.md).
 - `JobFailure(code, { retryable? })`: throw it from a handler to fail with a short stable code.
 - `claimJobs`, `completeJob`, `failJob`: the steps `runWorker` is made of, for tests and for anything that needs them separately.
 
@@ -33,6 +34,7 @@ await runWorker({
 - **A handler can run more than once for the same subject.** After a failure, after a crash, or after replay. Compute the result from the tenant's data and write it idempotently (an upsert of a recomputed value). Do not apply a delta ("add 3 to the count").
 - **Writes through `context.client` are exactly once.** They commit together with the job's completion, or are rolled back. Effects outside the database (an HTTP call, a model call) cannot be rolled back and are at least once.
 - **Never put customer data in a failure code or in a job.** A job holds its kind and an opaque id that points at tenant data (a row, or a batch of rows), nothing else, and a failure is stored as a short code. A thrown error's message is dropped on purpose.
+- **A handler's transaction must not sit idle.** The database ends a session that is idle in a transaction for 30 seconds, and a handler that waits for anything but the database (a download, a process, a model) is a long job: use `longJob`, and write only in the commit it returns.
 - **Stop when `context.signal` aborts.** It fires when the lease runs out. After that another worker may take the job, and this run's transaction is rolled back if one does. Choose a lease longer than your longest handler.
 
 ## Rules for the worker's database

@@ -38,6 +38,50 @@ export interface JobContext {
 export type JobHandler = (job: ClaimedJob, context: JobContext) => Promise<void>;
 
 /**
+ * The writes of a long job, made when its work is done. The worker runs them in the job's
+ * transaction and completes the job in the same one, so they are exactly once, as a handler's are.
+ */
+export type JobCommit = (client: TenantClient) => Promise<void>;
+
+export interface LongJobContext {
+  /** Aborted when the lease runs out, as for a handler. */
+  readonly signal: AbortSignal;
+  /**
+   * Runs `body` in a transaction restricted to the job's organisation, and ends it when `body`
+   * does. It is for reading what the work needs (a row that says what to fetch). Keep it short:
+   * a transaction that is idle for long is ended by the database (see `idleInTransactionTimeoutMs`
+   * of the pool), and one that is open holds back the cleaning of old rows.
+   */
+  readonly read: <T>(body: (client: TenantClient) => Promise<T>) => Promise<T>;
+}
+
+/**
+ * Does the work of a job that takes long, and gives back what to write. **No transaction is open
+ * while it works**: a download, a sandbox or a model can take minutes, and the database ends a
+ * transaction that sits idle for 30 seconds by default. The work reads through `context.read`, does
+ * what it does, and returns the commit; it must not write to the database any other way.
+ *
+ * Like a handler it may run more than once for the same subject, and what it does outside the
+ * database is at least once. Only the commit is exactly once. Choose a lease longer than the work.
+ */
+export type LongJobHandler = (job: ClaimedJob, context: LongJobContext) => Promise<JobCommit>;
+
+/** A handler that works outside a transaction. Made with {@link longJob}. */
+export interface LongJob {
+  readonly long: LongJobHandler;
+}
+
+/** Registers a handler for a job that takes long, so that it works with no transaction open. */
+export function longJob(handler: LongJobHandler): LongJob {
+  return Object.freeze({ long: handler });
+}
+
+const isLongJob = (handler: unknown): handler is LongJob =>
+  typeof handler === "object" &&
+  handler !== null &&
+  typeof (handler as { long?: unknown }).long === "function";
+
+/**
  * What a worker reports about itself. Events carry identifiers, the kind, attempt numbers and
  * short codes, and never a message, payload or customer value (invariant 3).
  */
@@ -62,7 +106,7 @@ export interface WorkerOptions {
   /** A pool for the application role. Needs at least `concurrency` connections. */
   app: Pool;
   /** One handler per job kind. The worker takes jobs of these kinds and no others. */
-  handlers: Readonly<Record<string, JobHandler>>;
+  handlers: Readonly<Record<string, JobHandler | LongJob>>;
   /** Stops the worker: no new jobs are taken, and jobs in progress are finished first. */
   signal: AbortSignal;
   /** Jobs run at the same time. Default 4. */
@@ -109,8 +153,11 @@ export async function runWorker(options: WorkerOptions): Promise<void> {
 
   const handlers = new Map(Object.entries(options.handlers));
   if (handlers.size === 0) throw new JobConfigurationError("a worker needs at least one handler");
-  for (const kind of handlers.keys()) {
+  for (const [kind, handler] of handlers) {
     if (!NAME_PATTERN.test(kind)) throw new JobConfigurationError("a handler kind is not valid");
+    if (typeof handler !== "function" && !isLongJob(handler)) {
+      throw new JobConfigurationError("a handler is not a function or a long job");
+    }
   }
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 100) {
     throw new JobConfigurationError("concurrency must be a whole number from 1 to 100");
@@ -147,10 +194,21 @@ export async function runWorker(options: WorkerOptions): Promise<void> {
     try {
       if (handler === undefined) throw new Error("no handler");
       const leaseExpired = AbortSignal.timeout(leaseSeconds * 1_000);
-      await withTenant(app, job.organisationId, async (client) => {
-        await handler(job, { client, signal: leaseExpired });
-        await completeJob(client, job);
-      });
+      if (isLongJob(handler)) {
+        const commit = await handler.long(job, {
+          signal: leaseExpired,
+          read: (body) => withTenant(app, job.organisationId, body),
+        });
+        await withTenant(app, job.organisationId, async (client) => {
+          await commit(client);
+          await completeJob(client, job);
+        });
+      } else {
+        await withTenant(app, job.organisationId, async (client) => {
+          await handler(job, { client, signal: leaseExpired });
+          await completeJob(client, job);
+        });
+      }
       emit({ type: "succeeded", ...ref(job) });
       return;
     } catch (error) {

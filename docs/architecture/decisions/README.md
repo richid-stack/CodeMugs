@@ -31,5 +31,6 @@
 | [0027](0027-github-app-read-only.md)                        | Reading a repository: a read-only GitHub App, a one-repo token | Accepted |
 | [0028](0028-unpacking-a-repository-archive.md)              | Unpacking a repository archive: a small reader, bounded        | Accepted |
 | [0029](0029-connecting-an-archive-to-the-analysis.md)       | Connecting an archive to the analysis: unpack, stage, analyse  | Accepted |
+| [0030](0030-long-jobs.md)                                   | Jobs that take long: the work runs with no transaction open    | Accepted |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

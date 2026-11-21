@@ -157,6 +157,10 @@ describe("runWorker", () => {
   it.each([
     ["no handlers", { handlers: {} }],
     ["a handler kind that is not a valid name", { handlers: { "Not Valid": handler } }],
+    ["a handler that is neither a function nor a long job", { handlers: { ok: {} as never } }],
+    ["a long job that is not a function", { handlers: { ok: { long: 1 } as never } }],
+    ["a handler that is nothing", { handlers: { ok: undefined as never } }],
+    ["a handler that is null", { handlers: { ok: null as never } }],
     ["zero concurrency", { concurrency: 0 }],
     ["a fractional concurrency", { concurrency: 1.5 }],
     ["more than 100 jobs at once", { concurrency: 101 }],

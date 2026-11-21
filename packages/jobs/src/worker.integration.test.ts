@@ -4,7 +4,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { JobFailure } from "./errors.js";
 import { claimJobs, completeJob, enqueueJob } from "./queue.js";
 import { describeDatabase, startHarness, waitFor, type Harness } from "./test-harness.js";
-import { runWorker, type JobHandler, type WorkerEvent, type WorkerOptions } from "./worker.js";
+import {
+  longJob,
+  runWorker,
+  type JobHandler,
+  type LongJob,
+  type WorkerEvent,
+  type WorkerOptions,
+} from "./worker.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,7 +51,7 @@ describeDatabase("the worker", () => {
 
   /** Starts a worker that retries at once and polls quickly, so tests do not wait on timers. */
   function startWorker(
-    handlers: Record<string, JobHandler>,
+    handlers: Record<string, JobHandler | LongJob>,
     options: Partial<WorkerOptions> = {},
   ): { events: WorkerEvent[]; stop: () => Promise<void>; done: Promise<void> } {
     const controller = new AbortController();
@@ -527,6 +534,237 @@ describeDatabase("the worker", () => {
       expect(observed.abortedAtStart).toBe(false);
       expect(observed.waitedMs).toBeGreaterThanOrEqual(900);
       expect((await h.job(jobId)).attempts).toBe(1);
+    });
+  });
+
+  describe("long jobs, which work with no transaction open", () => {
+    /** A pool whose database ends a transaction that is idle for a third of a second. */
+    function impatientPool() {
+      const pool = createPool({
+        connectionString: h.database.appUrl,
+        maxConnections: 4,
+        idleInTransactionTimeoutMs: 300,
+      });
+      impatient.push(pool);
+      return pool;
+    }
+    const impatient: Array<ReturnType<typeof createPool>> = [];
+    afterEach(async () => {
+      for (const pool of impatient.splice(0)) await pool.end();
+    });
+
+    it("works for longer than the database lets a transaction sit idle, and writes once", async () => {
+      const kind = uniqueKind();
+      const { jobId, subjectId } = await enqueue(orgA, kind);
+      let works = 0;
+      startWorker(
+        {
+          [kind]: longJob(async (job, { read }) => {
+            works += 1;
+            await read((client) => client.query("SELECT 1"));
+            await sleep(1_200); // four times the idle limit
+            return async (client) => {
+              await client.query(
+                "INSERT INTO test_effects (organisation_id, subject_id, attempt) VALUES ($1, $2, $3)",
+                [client.organisationId, job.subjectId, job.attempt],
+              );
+            };
+          }),
+        },
+        { app: impatientPool(), concurrency: 1 },
+      );
+      await waitForStatus(jobId, "succeeded");
+      expect(works).toBe(1);
+      expect((await h.job(jobId)).attempts).toBe(1);
+      expect(await h.effects(subjectId)).toBe(1);
+    });
+
+    it("is what an ordinary handler cannot do: its open transaction is ended by the database", async () => {
+      const kind = uniqueKind();
+      const { jobId, subjectId } = await enqueue(orgA, kind, 1);
+      startWorker(
+        {
+          [kind]: async (job, context) => {
+            await writeEffect(job, context);
+            await sleep(1_200);
+          },
+        },
+        { app: impatientPool(), concurrency: 1 },
+      );
+      await waitForStatus(jobId, "dead");
+      expect(await h.effects(subjectId)).toBe(0);
+      // The cause is recorded, and the process is still here to record it: before the connection's
+      // error was listened for, the database ending the session was an uncaught exception.
+      expect((await h.job(jobId)).last_error_code).toBe("db_25p03");
+    });
+
+    it("reads as the job's organisation and sees only that organisation's rows", async () => {
+      const kind = uniqueKind();
+      const { jobId } = await enqueue(orgA, kind);
+      const other = await enqueue(orgB, uniqueKind());
+      await withTenant(h.app, orgB, (client) =>
+        client.query(
+          "INSERT INTO test_effects (organisation_id, subject_id, attempt) VALUES ($1, $2, 1)",
+          [orgB, other.subjectId],
+        ),
+      );
+      const seen: Array<{ organisation: string; rows: number }> = [];
+      startWorker({
+        [kind]: longJob(async (_job, { read }) => {
+          seen.push(
+            await read(async (client) => ({
+              organisation: client.organisationId,
+              rows:
+                (
+                  await client.query("SELECT 1 FROM test_effects WHERE subject_id = $1", [
+                    other.subjectId,
+                  ])
+                ).rowCount ?? -1,
+            })),
+          );
+          return () => Promise.resolve();
+        }),
+      });
+      await waitForStatus(jobId, "succeeded");
+      expect(seen).toEqual([{ organisation: orgA, rows: 0 }]);
+    });
+
+    it("rolls back what a failed commit wrote, and does the work again on the next attempt", async () => {
+      const kind = uniqueKind();
+      const { jobId, subjectId } = await enqueue(orgA, kind);
+      let works = 0;
+      startWorker(
+        {
+          [kind]: longJob((job) => {
+            works += 1;
+            return Promise.resolve(async (client) => {
+              await client.query(
+                "INSERT INTO test_effects (organisation_id, subject_id, attempt) VALUES ($1, $2, $3)",
+                [client.organisationId, job.subjectId, job.attempt],
+              );
+              if (job.attempt === 1) throw new JobFailure("commit_failed");
+            });
+          }),
+        },
+        { concurrency: 1 },
+      );
+      await waitForStatus(jobId, "succeeded");
+      expect(works).toBe(2);
+      expect(await h.effects(subjectId)).toBe(1); // The first attempt's write was rolled back.
+      expect((await h.job(jobId)).last_error_code).toBe("commit_failed");
+    });
+
+    it("stores only the code of a failure of its work, and writes nothing", async () => {
+      const kind = uniqueKind();
+      const customerValue = `jane.${randomUUID()}@customer.example`;
+      const { jobId, subjectId } = await enqueue(orgA, kind, 1);
+      const { events } = startWorker({
+        [kind]: longJob(() => Promise.reject(new Error(`could not fetch ${customerValue}`))),
+      });
+      await waitForStatus(jobId, "dead");
+      const row = await h.job(jobId);
+      expect(row.last_error_code).toBe("handler_error");
+      expect(JSON.stringify(row)).not.toContain(customerValue);
+      expect(JSON.stringify(events)).not.toContain(customerValue);
+      expect(await h.effects(subjectId)).toBe(0);
+    });
+
+    it("keeps the code and the choice not to retry of a JobFailure from its work", async () => {
+      const kind = uniqueKind();
+      const { jobId } = await enqueue(orgA, kind, 5);
+      let works = 0;
+      startWorker({
+        [kind]: longJob(() => {
+          works += 1;
+          return Promise.reject(new JobFailure("repository_too_large", { retryable: false }));
+        }),
+      });
+      await waitForStatus(jobId, "dead");
+      expect((await h.job(jobId)).last_error_code).toBe("repository_too_large");
+      expect(works).toBe(1);
+    });
+
+    it("fails a job whose work does not give a commit, and does not complete it", async () => {
+      const kind = uniqueKind();
+      const { jobId } = await enqueue(orgA, kind, 1);
+      startWorker({ [kind]: longJob(() => Promise.resolve(undefined as never)) });
+      await waitForStatus(jobId, "dead");
+      expect((await h.job(jobId)).last_error_code).toBe("handler_error");
+    });
+
+    it("rolls back the commit of a run whose lease was taken over, and leaves the job to its new holder", async () => {
+      const kind = uniqueKind();
+      const { jobId, subjectId } = await enqueue(orgA, kind);
+      const working = gate();
+      const release = gate();
+      const { events } = startWorker(
+        {
+          [kind]: longJob(async (job) => {
+            working.open();
+            await release.wait;
+            return async (client) => {
+              await client.query(
+                "INSERT INTO test_effects (organisation_id, subject_id, attempt) VALUES ($1, $2, $3)",
+                [client.organisationId, job.subjectId, job.attempt],
+              );
+            };
+          }),
+        },
+        { concurrency: 1 },
+      );
+      await working.wait;
+      await h.expire(jobId);
+      const taken = await claimJobs(h.dispatcher, { kinds: [kind], limit: 1, leaseSeconds: 60 });
+      expect(taken.jobs[0]).toMatchObject({ jobId, attempt: 2 });
+
+      release.open();
+      await waitFor("the late run to be turned away", () =>
+        events.some((event) => event.type === "lease_lost"),
+      );
+      expect(await h.effects(subjectId)).toBe(0);
+      expect(await statusOf(jobId)).toBe("running");
+    });
+
+    it("tells the work when the lease has run out", async () => {
+      const kind = uniqueKind();
+      const { jobId } = await enqueue(orgA, kind);
+      const observed: { abortedAtStart?: boolean; waitedMs?: number } = {};
+      startWorker(
+        {
+          [kind]: longJob(async (_job, { signal }) => {
+            observed.abortedAtStart = signal.aborted;
+            const begun = Date.now();
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            observed.waitedMs = Date.now() - begun;
+            return () => Promise.resolve();
+          }),
+        },
+        { concurrency: 1, leaseSeconds: 1 },
+      );
+      await waitForStatus(jobId, "succeeded");
+      expect(observed.abortedAtStart).toBe(false);
+      expect(observed.waitedMs).toBeGreaterThanOrEqual(900);
+    });
+
+    it("runs ordinary handlers and long jobs in the same worker", async () => {
+      const ordinary = uniqueKind();
+      const long = uniqueKind();
+      const a = await enqueue(orgA, ordinary);
+      const b = await enqueue(orgA, long);
+      startWorker({
+        [ordinary]: writeEffect,
+        [long]: longJob((job) =>
+          Promise.resolve(async (client) => {
+            await writeEffect(job, { client, signal: new AbortController().signal });
+          }),
+        ),
+      });
+      await waitForStatus(a.jobId, "succeeded");
+      await waitForStatus(b.jobId, "succeeded");
+      expect(await h.effects(a.subjectId)).toBe(1);
+      expect(await h.effects(b.subjectId)).toBe(1);
     });
   });
 

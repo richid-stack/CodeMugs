@@ -22,5 +22,14 @@ export type {
   EnqueueResult,
   FailOutcome,
 } from "./queue.js";
-export { runWorker } from "./worker.js";
-export type { JobContext, JobHandler, WorkerEvent, WorkerOptions } from "./worker.js";
+export { longJob, runWorker } from "./worker.js";
+export type {
+  JobCommit,
+  JobContext,
+  JobHandler,
+  LongJob,
+  LongJobContext,
+  LongJobHandler,
+  WorkerEvent,
+  WorkerOptions,
+} from "./worker.js";
