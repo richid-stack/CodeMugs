@@ -22,7 +22,17 @@ const APPEND_ONLY_TABLES: ReadonlySet<string> = new Set([
   "analysis_runs",
   "graph_nodes",
   "graph_edges",
+  "repository_connections",
+  "analysis_requests",
 ]);
+
+/**
+ * Tables that an operator writes and the application only reads, because what is in them decides
+ * what a tenant is allowed to reach (which GitHub installations are its own). A tenant that could
+ * write one would be able to name someone else's. Because no tenant can write them or probe them,
+ * they may hold a unique constraint that spans tenants, which no other table may.
+ */
+const OPERATOR_TABLES: ReadonlySet<string> = new Set(["github_installations"]);
 
 /**
  * Tables whose rows may change but are never deleted by a runtime role. Deleting them for
@@ -313,6 +323,11 @@ export async function findSchemaViolations(pool: Pool): Promise<string[]> {
     if (APPEND_ONLY_TABLES.has(table.name) && (app.can_update || app.can_delete)) {
       violations.push(`${label} is append-only but ${APP_ROLE} can update or delete it`);
     }
+    if (OPERATOR_TABLES.has(table.name) && (app.can_insert || app.can_update || app.can_delete)) {
+      violations.push(
+        `${label} is written by an operator but ${APP_ROLE} can insert, update or delete it`,
+      );
+    }
     if (KEPT_TABLES.has(table.name) && app.can_delete) {
       violations.push(`${label} keeps its rows but ${APP_ROLE} can delete them`);
     }
@@ -431,6 +446,7 @@ export async function findSchemaViolations(pool: Pool): Promise<string[]> {
   );
   for (const index of uniqueIndexes.rows) {
     if (!tenantTables.has(index.table_name) || TENANT_ROOT_TABLES.has(index.table_name)) continue;
+    if (OPERATOR_TABLES.has(index.table_name)) continue;
     if (!index.columns.includes("organisation_id")) {
       violations.push(
         `unique index ${index.index_name} on ${index.table_name} does not include organisation_id`,
