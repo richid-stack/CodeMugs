@@ -16,10 +16,22 @@ const principal: Principal = {
   organisationId: randomUUID(),
   projectId: randomUUID(),
   apiKeyId: randomUUID(),
+  scopes: ["events:write"],
 };
 const TOKEN = "valid-token-for-tests";
+// Keys that are valid and may not send events: one that may read analyses, and one that may do nothing.
+const READER_TOKEN = "reader-token-for-tests";
+const POWERLESS_TOKEN = "powerless-token-for-tests";
 const authenticator: Authenticator = (token) =>
-  Promise.resolve(token === TOKEN ? principal : undefined);
+  Promise.resolve(
+    token === TOKEN
+      ? principal
+      : token === READER_TOKEN
+        ? { ...principal, scopes: ["analysis:read"] }
+        : token === POWERLESS_TOKEN
+          ? { ...principal, scopes: [] }
+          : undefined,
+  );
 
 const ACCEPTED: IngestOutcome = {
   ok: true,
@@ -124,6 +136,71 @@ describe("POST /v1/events", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.scope).toEqual(principal);
+  });
+
+  describe("with a valid key that may not send events", () => {
+    it.each([
+      ["one that may only read analyses", READER_TOKEN],
+      ["one that may do nothing", POWERLESS_TOKEN],
+    ])("answers 403 for %s and never calls the ingester", async (_label, token) => {
+      const { ingester, calls } = recorder();
+      const { app } = await start({ ingester });
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { ...json, authorization: `Bearer ${token}` },
+        payload: { events: [{}] },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      const body = response.json<ErrorBody>();
+      expect(body.error.code).toBe("forbidden");
+      expect(body.error.message).toBe('This API key does not have the "events:write" scope');
+      expect(body.error.requestId).toBe(response.headers["x-request-id"]);
+      expect(calls).toEqual([]);
+    });
+
+    it("refuses before the body is read, so a body that cannot be read is still a 403", async () => {
+      const { ingester, calls } = recorder();
+      const { app } = await start({ ingester });
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { ...json, authorization: `Bearer ${READER_TOKEN}` },
+        payload: "{ not json",
+      });
+      expect(response.statusCode).toBe(403);
+      expect(calls).toEqual([]);
+    });
+
+    it("refuses before it says whether ingestion is available", async () => {
+      const { app } = await start({});
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { ...json, authorization: `Bearer ${READER_TOKEN}` },
+        payload: { events: [{}] },
+      });
+      expect(response.statusCode).toBe(403);
+    });
+
+    it("says in the log that a key lacked a scope, without the key", async () => {
+      const lines: string[] = [];
+      const { ingester } = recorder();
+      const { app } = await start({ ingester, logLevel: "info", lines });
+      await app.inject({
+        method: "POST",
+        url: "/v1/events",
+        headers: { ...json, authorization: `Bearer ${READER_TOKEN}` },
+        payload: { events: [{}] },
+      });
+      const log = lines.join("\n");
+      expect(log).toContain("key lacks the scope that the route needs");
+      expect(log).toContain("events:write");
+      expect(log).not.toContain(READER_TOKEN);
+    });
   });
 
   describe("without a valid credential", () => {

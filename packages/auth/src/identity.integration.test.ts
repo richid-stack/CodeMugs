@@ -97,11 +97,13 @@ describeDatabase("identity against PostgreSQL", () => {
         organisationId: orgA,
         projectId: projectA,
         apiKeyId: keyA.id,
+        scopes: ["events:write"],
       });
       expect(await authenticateApiKey(app, keyB.key)).toEqual({
         organisationId: orgB,
         projectId: projectB,
         apiKeyId: keyB.id,
+        scopes: ["events:write"],
       });
     });
 
@@ -163,6 +165,7 @@ describeDatabase("identity against PostgreSQL", () => {
           organisationId: issued[index]?.org,
           projectId: issued[index]?.project,
           apiKeyId: issued[index]?.key.id,
+          scopes: ["events:write"],
         });
       });
     });
@@ -239,6 +242,110 @@ describeDatabase("identity against PostgreSQL", () => {
     it("allows the same project name in a different organisation", async () => {
       const created = await createProject(app, orgB, { name: "alpha", actor: SYSTEM });
       expect(created.id).toMatch(/^[0-9a-f-]{36}$/);
+    });
+  });
+
+  describe("what a key may do", () => {
+    const issueWith = (scopes?: readonly string[], project = projectA) =>
+      issueApiKey(app, orgA, project, {
+        name: "scoped",
+        actor: SYSTEM,
+        ...(scopes === undefined ? {} : { scopes }),
+      });
+
+    it("may only send events when no scopes are named", async () => {
+      const issued = await issueWith();
+      expect((await authenticateApiKey(app, issued.key))?.scopes).toEqual(["events:write"]);
+      const stored = await admin.query("SELECT scopes FROM api_keys WHERE id = $1", [issued.id]);
+      expect(stored.rows).toEqual([{ scopes: ["events:write"] }]);
+    });
+
+    it("may only send events when a row is written with no scopes at all, as the database sees it", async () => {
+      const id = randomUUID();
+      await admin.query(
+        `INSERT INTO api_keys (id, organisation_id, project_id, name, secret_hash)
+         VALUES ($1, $2, $3, 'bare', $4)`,
+        [id, orgA, projectA, Buffer.alloc(32)],
+      );
+      const stored = await admin.query("SELECT scopes FROM api_keys WHERE id = $1", [id]);
+      expect(stored.rows).toEqual([{ scopes: ["events:write"] }]);
+    });
+
+    it("has the scopes it was issued with, in a fixed order and without repeats", async () => {
+      const issued = await issueWith(["analysis:write", "events:write", "analysis:write"]);
+      expect((await authenticateApiKey(app, issued.key))?.scopes).toEqual([
+        "events:write",
+        "analysis:write",
+      ]);
+      const reader = await issueWith(["analysis:read"]);
+      expect((await authenticateApiKey(app, reader.key))?.scopes).toEqual(["analysis:read"]);
+    });
+
+    it.each([
+      ["no scopes", []],
+      ["a scope that is not known", ["events:write", "admin"]],
+      ["a scope in other letters", ["Events:Write"]],
+      ["a wildcard", ["*"]],
+      ["something that is not a list", "events:write"],
+      ["something that is not a string in the list", [1]],
+    ])("refuses %s, and issues no key", async (_label, scopes) => {
+      const before = await adminCount("SELECT count(*) FROM api_keys WHERE organisation_id = $1", [
+        orgA,
+      ]);
+      const error = await rejection(issueWith(scopes as never));
+      expect(error).toBeInstanceOf(IdentityError);
+      expect((error as IdentityError).code).toBe("invalid_scopes");
+      expect(
+        await adminCount("SELECT count(*) FROM api_keys WHERE organisation_id = $1", [orgA]),
+      ).toBe(before);
+    });
+
+    it("records the scopes in the audit log with the issue of the key", async () => {
+      const issued = await issueWith(["analysis:read", "analysis:write"]);
+      const entry = await admin.query(
+        "SELECT metadata FROM audit_log WHERE action = 'api_key.issued' AND target_id = $1",
+        [issued.id],
+      );
+      expect(entry.rows).toEqual([
+        { metadata: { projectId: projectA, scopes: "analysis:read analysis:write" } },
+      ]);
+    });
+
+    it("cannot be changed by the application, which can only revoke", async () => {
+      const issued = await issueWith();
+      const attempt = withTenant(app, orgA, (client) =>
+        client.query("UPDATE api_keys SET scopes = ARRAY['analysis:read'] WHERE id = $1", [
+          issued.id,
+        ]),
+      );
+      expect(postgresErrorCode(await rejection(attempt))).toBe("42501");
+      expect((await authenticateApiKey(app, issued.key))?.scopes).toEqual(["events:write"]);
+    });
+
+    it.each([
+      ["an empty list", "ARRAY[]::text[]"],
+      ["a scope that is not known", "ARRAY['admin']"],
+      ["a known scope and one that is not", "ARRAY['events:write', 'admin']"],
+      ["a null", "NULL"],
+      ["a list with a null in it", "ARRAY['events:write', NULL]"],
+      ["a list of lists", "ARRAY[['events:write']]"],
+    ])("is refused by the database too, for %s", async (_label, value) => {
+      const attempt = withTenant(app, orgA, (client) =>
+        client.query(
+          `INSERT INTO api_keys (organisation_id, project_id, name, secret_hash, scopes)
+           VALUES ($1, $2, 'direct', $3, ${value})`,
+          [orgA, projectA, Buffer.alloc(32)],
+        ),
+      );
+      expect(["23514", "23502"]).toContain(postgresErrorCode(await rejection(attempt)));
+    });
+
+    it("keeps the scopes of a key that is revoked, and a revoked key is still refused", async () => {
+      const issued = await issueWith(["analysis:write"]);
+      expect(await revokeApiKey(app, orgA, issued.id, { actor: SYSTEM })).toBe(true);
+      expect(await authenticateApiKey(app, issued.key)).toBeUndefined();
+      const stored = await admin.query("SELECT scopes FROM api_keys WHERE id = $1", [issued.id]);
+      expect(stored.rows).toEqual([{ scopes: ["analysis:write"] }]);
     });
   });
 
@@ -375,7 +482,7 @@ describeDatabase("identity against PostgreSQL", () => {
           target_type: "api_key",
           target_id: issued.id,
           request_id: null,
-          metadata: { projectId: project.id },
+          metadata: { projectId: project.id, scopes: "events:write" },
         },
         {
           action: "api_key.revoked",

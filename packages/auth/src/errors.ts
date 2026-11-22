@@ -1,4 +1,5 @@
-export type IdentityErrorCode = "invalid_name" | "already_exists" | "project_not_found";
+export type IdentityErrorCode =
+  "invalid_name" | "already_exists" | "project_not_found" | "invalid_scopes";
 
 /**
  * A request the identity operations cannot carry out, for a reason the caller can act on. The
@@ -13,6 +14,7 @@ export class IdentityError extends Error {
         invalid_name: "name must be 1 to 200 characters",
         already_exists: "an item with that name already exists",
         project_not_found: "project not found",
+        invalid_scopes: "scopes must be a list of one or more known scopes",
       }[code],
     );
     this.name = "IdentityError";

@@ -32,4 +32,8 @@ pnpm --filter @codemugs/auth test
 
 ## Not done yet
 
-Rate limiting of unauthenticated attempts, key scopes, key expiry and rotation, a pepper for the stored hashes, and an administration path to create organisations, projects and keys. See ADR 0010.
+Rate limiting of unauthenticated attempts, key expiry and rotation, a pepper for the stored hashes, and an administration path to create organisations, projects and keys. See ADR 0010.
+
+## What a key may do
+
+A key has scopes, fixed when it is issued: `events:write`, `analysis:write` and `analysis:read` ([ADR 0033](../../docs/architecture/decisions/0033-api-key-scopes.md)). `issueApiKey(..., { scopes })` takes them; with none named a key may only send events, which is what every key could do before. The application cannot change them (a key that needs more is revoked and replaced), the database refuses an empty list or a scope it does not know, and `authenticateApiKey` gives the principal the scopes it was issued with and drops any it does not know.

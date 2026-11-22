@@ -16,6 +16,7 @@ const principal: Principal = {
   organisationId: randomUUID(),
   projectId: randomUUID(),
   apiKeyId: randomUUID(),
+  scopes: ["events:write"],
 };
 
 const VALID_TOKEN = "valid-token-for-tests";

@@ -1,6 +1,7 @@
 import { MAX_EVENTS_PER_BATCH, type BatchShapeError } from "@codemugs/ingestion";
 import type { FastifyInstance } from "fastify";
 import type { EventIngester } from "../ingestion.js";
+import { requireScope } from "../scopes.js";
 
 const BATCH_MESSAGES: Record<BatchShapeError, string> = {
   body_not_an_object: 'The request body must be a JSON object: { "events": [ ... ] }',
@@ -22,7 +23,7 @@ export function registerEventRoutes(
   v1: FastifyInstance,
   { ingester }: { ingester: EventIngester | undefined },
 ): void {
-  v1.post("/events", async (request, reply) => {
+  v1.post("/events", { onRequest: requireScope("events:write") }, async (request, reply) => {
     const principal = request.principal;
     if (principal === null) {
       // Unreachable: the authentication hook answers every request that has no principal.
