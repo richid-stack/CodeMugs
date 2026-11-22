@@ -1,6 +1,6 @@
 import { ConfigError, loadApiConfig } from "@codemugs/configuration";
 import { buildApp } from "./app.js";
-import { createDatabaseServices } from "./database.js";
+import { appServices, createDatabaseServices } from "./database.js";
 
 async function main(): Promise<void> {
   let config;
@@ -29,10 +29,7 @@ async function main(): Promise<void> {
   // /v1 route answers 503 instead of guessing.
   const { app, health } = await buildApp({
     config,
-    readinessChecks: database === undefined ? [] : [database.readiness],
-    ...(database === undefined
-      ? {}
-      : { authenticator: database.authenticate, ingester: database.ingest }),
+    ...(database === undefined ? {} : appServices(database)),
   });
   reportDatabaseError = (error) => {
     app.log.error({ err: error }, "database connection error");

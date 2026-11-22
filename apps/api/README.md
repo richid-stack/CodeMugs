@@ -1,17 +1,19 @@
 # @codemugs/api
 
-The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and two endpoints behind it: `GET /v1/whoami` and `POST /v1/events` (event ingestion, for keys with the `events:write` scope). Nothing reads events back yet.
+The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and the endpoints behind it: `GET /v1/whoami`, `POST /v1/events` (event ingestion, for keys with the `events:write` scope) and the routes that connect a repository and ask for it to be analysed (`analysis:write`, `analysis:read`). Nothing reads events back yet, and nothing runs an analysis yet: the process that does is the next part, so these routes record and queue and no more.
 
 **Status:** Phase 1 · Foundation (started)
 
 ## Endpoints
 
-| Route             | Purpose                                                                                                                                                    |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz`    | Liveness. The process is up. Never checks dependencies, so a database outage cannot trigger restarts                                                       |
-| `GET /readyz`     | Readiness. Runs registered dependency checks with timeouts and returns `503` if any fail or shutdown has begun. Failure details are logged, never returned |
-| `GET /v1/whoami`  | Requires an API key. Returns the `organisationId`, `projectId`, `apiKeyId` and `scopes` of the key, so an SDK can check a key without sending data         |
-| `POST /v1/events` | Requires an API key with the `events:write` scope (ADR 0033). Records a batch of 1 to 500 events and says what happened to each (see below)                |
+| Route                                                           | Purpose                                                                                                                                                    |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`                                                  | Liveness. The process is up. Never checks dependencies, so a database outage cannot trigger restarts                                                       |
+| `GET /readyz`                                                   | Readiness. Runs registered dependency checks with timeouts and returns `503` if any fail or shutdown has begun. Failure details are logged, never returned |
+| `GET /v1/whoami`                                                | Requires an API key. Returns the `organisationId`, `projectId`, `apiKeyId` and `scopes` of the key, so an SDK can check a key without sending data         |
+| `POST /v1/events`                                               | Requires an API key with the `events:write` scope (ADR 0033). Records a batch of 1 to 500 events and says what happened to each (see below)                |
+| `POST /v1/repository`, `GET /v1/repository`                     | `analysis:write` to say which GitHub repository the key's project is (once), `analysis:read` to read it back (ADR 0034)                                    |
+| `POST /v1/analyses`, `GET /v1/analyses`, `GET /v1/analyses/:id` | `analysis:write` to ask for an analysis at a `ref` (`202`, a worker does it later), `analysis:read` to list them and to see how one is going (ADR 0034)    |
 
 ## Behaviour
 

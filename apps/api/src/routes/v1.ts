@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { bearerToken, type Authenticator } from "../authentication.js";
+import type { AnalysisService } from "../analysis.js";
 import type { EventIngester } from "../ingestion.js";
+import { registerAnalysisRoutes } from "./analysis.js";
 import { registerEventRoutes } from "./events.js";
 
 export interface V1RoutesOptions {
@@ -8,6 +10,8 @@ export interface V1RoutesOptions {
   authenticator: Authenticator | undefined;
   /** Without one, `POST /v1/events` answers 503. */
   ingester: EventIngester | undefined;
+  /** Without one, the repository and analysis routes answer 503. */
+  analysis: AnalysisService | undefined;
 }
 
 /**
@@ -22,7 +26,7 @@ export interface V1RoutesOptions {
  */
 export function registerV1Routes(
   app: FastifyInstance,
-  { authenticator, ingester }: V1RoutesOptions,
+  { authenticator, ingester, analysis }: V1RoutesOptions,
 ): void {
   void app.register(
     (v1, _options, done) => {
@@ -88,6 +92,7 @@ export function registerV1Routes(
       });
 
       registerEventRoutes(v1, { ingester });
+      registerAnalysisRoutes(v1, { analysis });
 
       done();
     },

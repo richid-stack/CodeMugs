@@ -35,5 +35,6 @@
 | [0031](0031-connecting-a-repository-and-asking-for-an-analysis.md) | Connecting a repository and asking for an analysis: the API records, a worker does | Accepted                          |
 | [0032](0032-the-job-that-analyses-a-repository.md)                 | The job that analyses a repository                                                 | Accepted (the process is a draft) |
 | [0033](0033-api-key-scopes.md)                                     | API key scopes                                                                     | Accepted                          |
+| [0034](0034-analysis-routes.md)                                    | The routes that connect a repository and ask for an analysis                       | Accepted                          |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
