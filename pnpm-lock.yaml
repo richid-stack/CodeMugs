@@ -75,6 +75,9 @@ importers:
       '@codemugs/ingestion':
         specifier: workspace:*
         version: link:../ingestion
+      '@codemugs/repository-analysis':
+        specifier: workspace:*
+        version: link:../../core/repository-analysis
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage

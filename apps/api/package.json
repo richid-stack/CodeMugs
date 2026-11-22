@@ -19,6 +19,7 @@
     "@codemugs/auth": "workspace:*",
     "@codemugs/configuration": "workspace:*",
     "@codemugs/ingestion": "workspace:*",
+    "@codemugs/repository-analysis": "workspace:*",
     "@codemugs/storage": "workspace:*",
     "@fastify/helmet": "13.2.0",
     "fastify": "5.12.8"

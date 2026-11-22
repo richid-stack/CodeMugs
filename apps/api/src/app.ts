@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import helmet from "@fastify/helmet";
 import type { ApiConfig } from "@codemugs/configuration";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { AnalysisService } from "./analysis.js";
 import type { Authenticator } from "./authentication.js";
 import type { EventIngester } from "./ingestion.js";
 import { serializeError } from "./logging.js";
@@ -33,6 +34,8 @@ export interface BuildAppOptions {
   authenticator?: Authenticator;
   /** Records the events of `POST /v1/events`. Without one, that route answers 503. */
   ingester?: EventIngester;
+  /** Connects a repository and asks for it to be analysed. Without one, those routes answer 503. */
+  analysis?: AnalysisService;
   /** Where log lines go. For tests that need to read them; production logs to stdout. */
   logStream?: { write(line: string): void };
 }
@@ -47,6 +50,7 @@ export async function buildApp({
   readinessChecks = [],
   authenticator,
   ingester,
+  analysis,
   logStream,
 }: BuildAppOptions): Promise<BuiltApp> {
   const app = Fastify({
@@ -110,7 +114,7 @@ export async function buildApp({
   const health: HealthState = { shuttingDown: false };
   registerHealthRoutes(app, { checks: readinessChecks, state: health });
   // After the error handler is set, so the routes in this scope inherit it.
-  registerV1Routes(app, { authenticator, ingester });
+  registerV1Routes(app, { authenticator, ingester, analysis });
 
   return { app, health };
 }
