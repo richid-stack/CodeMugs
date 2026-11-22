@@ -7,5 +7,7 @@
 .env.*
 !.env.example
 docs
+site
+assets
 *.md
 !README.md
