@@ -328,6 +328,7 @@ describeDatabase("identity against PostgreSQL", () => {
       ["a known scope and one that is not", "ARRAY['events:write', 'admin']"],
       ["a null", "NULL"],
       ["a list with a null in it", "ARRAY['events:write', NULL]"],
+      ["a list of lists", "ARRAY[['events:write']]"],
     ])("is refused by the database too, for %s", async (_label, value) => {
       const attempt = withTenant(app, orgA, (client) =>
         client.query(

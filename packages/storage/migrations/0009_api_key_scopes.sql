@@ -9,6 +9,7 @@
 ALTER TABLE api_keys
   ADD COLUMN scopes text[] NOT NULL DEFAULT ARRAY['events:write']::text[]
     CHECK (
-      cardinality(scopes) >= 1
+      array_ndims(scopes) = 1
+      AND cardinality(scopes) >= 1
       AND scopes <@ ARRAY['events:write', 'analysis:read', 'analysis:write']::text[]
     );
