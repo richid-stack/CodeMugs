@@ -10,16 +10,16 @@ Open `index.html` in a browser, or serve the folder:
 python3 -m http.server --directory site 8080
 ```
 
-It works at phone width. The page carries a small "Draft concept" note, and asks search engines not to index it (`noindex`), so that an accidental deployment says what it is.
+It works at phone width. It asks search engines not to index it (`noindex`), so that an accidental deployment does not end up in search results.
 
 ## What was changed when it was added
 
-The design and copy are the owner's. Four things were changed, because they would have said something false:
+The design and copy are the owner's. Three things were changed, because they would have said something false:
 
 - The row of six customer names and logos was removed. CodeMugs has no customers, and some of the names look like real companies.
 - The REST sample now shows the request the API really accepts: `Authorization: Bearer cmk_…` and a body of `{ "events": [ … ] }`. It had a key prefix and a body that do not exist.
 - The footer named another brand when scripts are off. It now says CodeMugs.
-- The "Draft concept" note and `noindex` were added.
+- `noindex` was added.
 
 ## Before it goes live
 
@@ -39,7 +39,7 @@ Each row is something the page says that is not yet true, or that needs a decisi
 | "© CodeMugs. All rights reserved."                                                                                      | The code's [licence](../LICENSE) names Richard Mensah as the copyright holder                                                                      | Decide who the copyright holder is                                                                             |
 | Fonts from Google Fonts                                                                                                 | Each visitor's address is sent to Google                                                                                                           | Host the fonts yourself if that matters to your audience (both are SIL OFL)                                    |
 
-When a row is resolved, delete it from this table. When the table is empty, remove the "Draft concept" note and `noindex` from `index.html`.
+When a row is resolved, delete it from this table. When the table is empty, remove `noindex` from `index.html`.
 
 ## Brand
 
