@@ -8,7 +8,7 @@
 <h3>Connect your application. Give it a path to improve.</h3>
 
 <p>
-CodeMugs understands an application, finds problems in it, investigates them with evidence,<br>
+CodeMugs lives inside your application, understands the application, finds problems in it, investigates them with evidence,<br>
 and produces engineering changes that are <b>verified</b> before anyone is asked to trust them.
 </p>
 
