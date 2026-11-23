@@ -1,0 +1,27 @@
+# 0037. The routes that read a graph
+
+- **Status:** Accepted
+- **Date:** 2026-11-23
+
+## Context
+
+An analysis stores a graph of what it found in a repository ([ADR 0026](0026-system-graph-storage.md), [ADR 0032](0032-the-job-that-analyses-a-repository.md)), and the reads over it are a package that the API can use without holding the analyser ([ADR 0036](0036-reading-the-graph-apart-from-building-it.md)). The routes that ask for an analysis say how it is going and not what it found ([ADR 0034](0034-analysis-routes.md)). This adds the routes that say what it found.
+
+## Decisions
+
+1. **Six routes, all `analysis:read`** ([ADR 0033](0033-api-key-scopes.md)): `GET /v1/graph` (the run stored last for the key's project), `GET /v1/analyses/:id/graph` (one run, in numbers), `…/nodes` (a page at a time), `…/node` (one, by kind and key), `…/nodes/:nodeId/neighbours` (what a node is joined to) and `…/imports` (the files that a file's importers or imports reach). The scope is checked before anything is read.
+2. **The graph is the key's project's.** The organisation and the project come from the credential (invariant 1). A request names a run by its id, which is the analysis's id, and the service finds the run and checks that it is the key's project's inside one read-only transaction of the key's organisation, before it reads from it. A run that is another project's, another organisation's, not made yet (the analysis has not succeeded) or not there is the same `404 graph_not_found`, with the same words, and the checks of what is in it are not made. Row-level security is the second wall for another organisation; the project check is the only one for another project of the same organisation, and it has its own tests.
+3. **A route takes the parameters it names and no others.** A parameter that is not one of them, one that is given twice, one that is empty and one that is out of range is `400 invalid_input` with a fixed sentence that says nothing of what was sent, so a client that names a project or an organisation in the query is told that it cannot. A `kind` must be one of the vocabulary's kinds, a key or a path has 1 to 1,024 characters and no NUL (which the database cannot hold), a node id is a whole number of at most nine digits (so that it fits the column) and a depth is 1 to 50. An id in a path that is not a UUID is the same `400`.
+4. **Pages are small, and the cursor is the last id.** A page is 100 unless asked, and at most 1,000, which is less than the library allows (10,000). `nodes` says `next` when the page is full, and it is the number to pass as `after`. `neighbours` and `imports` have a `limit` and no cursor: a list of exactly `limit` entries may have been cut, and the client asks again with a larger limit (up to 1,000).
+5. **A node that is not there is not an empty list.** `node`, `neighbours` and `imports` answer `404 node_not_found` for a node, or a path that is not a file of the run, and `200` with an empty list for a node that exists and has no edges. The check is one more read inside the same transaction, using the library's public reads.
+6. **Node ids belong to a run.** A node's `id` is a number in the order of its kind and key within one run, and is not the same in another run. A client that follows a thing from one analysis to the next uses its kind and key. The routes say so in the README.
+7. **What comes back is data.** File paths, packages and routes are names from a customer's repository, and are returned as they were stored, in JSON, and never as instructions (invariant 2). Nothing here sanitises them for a page or a prompt: whatever shows them to a person or a model must treat them as untrusted.
+8. **Failures are fixed sentences.** A `GraphError` for an argument is `400`; any other error (the database, or a code that belongs to storing) is a generic `500` that says nothing of what failed, and is logged (invariant 6). The service not being wired is `503 graph_unavailable`.
+
+## Consequences
+
+- A project's graph can be read back, after the process that analyses repositories has stored it. Nothing is shown for a real repository through the whole path yet: that is a test of its own (the last part of step 9a).
+- There is no rate limit or quota on these routes, so a key can read up to 1,000 nodes in each request as often as it likes. Rate limiting is not done, and nothing here is switched on for a customer. A graph cannot be deleted either (gate 15).
+- The `digest` of a run is given, so that a client can tell that two runs are the same graph. It is not a signature.
+- A graph that is large (an analysis is bounded to 20,000 nodes and 100,000 edges) is read a page at a time; the walk of imports is bounded by its depth and limit, and its time on such a graph is covered by the reader's own tests ([ADR 0036](0036-reading-the-graph-apart-from-building-it.md)) and not measured through the API.
+- Tested against PostgreSQL: the six routes against a graph written by hand; another project of the same organisation and another organisation, shown as the same `404`; the scopes; the parameters that are refused; that no read writes; and that every read of the service is one read-only transaction and reads nothing of a run that is not the key's project's. 31 deliberate faults in the service and the routes were planted one at a time and each is caught by a test (one needed a test added). It is not shown through the real analyser and a real sandbox.

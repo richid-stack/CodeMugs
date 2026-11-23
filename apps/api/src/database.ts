@@ -4,6 +4,7 @@ import { recordEvents } from "@codemugs/ingestion";
 import { createPool } from "@codemugs/storage";
 import { createAnalysisService, type AnalysisService } from "./analysis.js";
 import type { Authenticator } from "./authentication.js";
+import { createGraphService, type GraphService } from "./graph.js";
 import type { EventIngester } from "./ingestion.js";
 import type { ReadinessCheck } from "./routes/health.js";
 
@@ -11,6 +12,7 @@ export interface DatabaseServices {
   authenticate: Authenticator;
   ingest: EventIngester;
   analysis: AnalysisService;
+  graph: GraphService;
   readiness: ReadinessCheck;
   close(): Promise<void>;
 }
@@ -28,6 +30,7 @@ export function createDatabaseServices(
     authenticate: (presentedKey) => authenticateApiKey(pool, presentedKey),
     ingest: (scope, body) => recordEvents(pool, scope, body),
     analysis: createAnalysisService(pool),
+    graph: createGraphService(pool),
     readiness: {
       name: "database",
       timeoutMs: 1_500,
@@ -52,5 +55,6 @@ export function appServices(database: DatabaseServices) {
     authenticator: database.authenticate,
     ingester: database.ingest,
     analysis: database.analysis,
+    graph: database.graph,
   };
 }

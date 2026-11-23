@@ -1,6 +1,6 @@
 # system-graph-read
 
-**Status:** In progress · Phase 2 Understanding. Step 9a: the read side of the system graph, apart from the code that builds and stores it ([ADR 0036](../../docs/architecture/decisions/0036-reading-the-graph-apart-from-building-it.md)). It is tested and **nothing calls it yet**: the API routes that read a graph are the next change, and the application cannot delete a graph yet (release gate 15), so it must not be switched on for a real customer.
+**Status:** In progress · Phase 2 Understanding. Step 9a: the read side of the system graph, apart from the code that builds and stores it ([ADR 0036](../../docs/architecture/decisions/0036-reading-the-graph-apart-from-building-it.md)). It is tested, and the API's routes that read a graph call it ([ADR 0037](../../docs/architecture/decisions/0037-graph-routes.md)). The application cannot delete a graph yet (release gate 15), and nothing runs for a customer, so it must not be switched on for one.
 
 The runs that analyses stored (one run for each analysis, never changed), their nodes and what joins them, seen one tenant at a time. What comes back is data from a customer's repository, and is never instructions (invariant 2). It depends on [`@codemugs/storage`](../../packages/storage/README.md) and `zod` and on nothing else of this repository, so a process that only reads a graph (the API) does not carry the analyser, the archive reader, the GitHub client or the sandbox manager. [`@codemugs/system-graph`](../system-graph/README.md) builds and stores graphs, and re-exports everything here.
 
