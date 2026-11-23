@@ -406,8 +406,10 @@ describeDatabase("the process that analyses repositories", () => {
       const { requestId } = await withTenant(h.app, tenant.organisationId, (client) =>
         requestAnalysis(client, { projectId: tenant.projectId, ref: "main" }),
       );
+      // The count of tries goes up when the job is taken and the code is written when the try fails,
+      // so it is the code that says the first try is over.
       await waitFor("the first try to fail", async () => {
-        return ((await stateOf(requestId))?.attempts ?? 0) >= 1;
+        return (await stateOf(requestId))?.failureCode !== undefined;
       });
       const state = await stateOf(requestId);
       expect(state?.status).not.toBe("succeeded");
