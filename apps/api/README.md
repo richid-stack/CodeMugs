@@ -116,6 +116,10 @@ const { app } = await buildApp({
 
 Register it inside the scope in `src/routes/v1.ts`. Read the caller from `request.principal`, and use `principal.organisationId` for every database call (`withTenant`). Never read a tenant from the request.
 
+## Starting it from a test
+
+`src/index.ts` exports `buildApp` and the database services (`createDatabaseServices`, `appServices`), so that a test can start the API in its own process with the same wiring as `main.ts`. The whole-path test does ([`tests/end-to-end`](../../tests/end-to-end/README.md), [ADR 0038](../../docs/architecture/decisions/0038-the-test-of-the-whole-path.md)). It is not a public interface, and the package is still not published.
+
 ## Commands
 
 ```bash

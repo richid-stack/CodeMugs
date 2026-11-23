@@ -289,6 +289,33 @@ importers:
 
   tests/demo-shop: {}
 
+  tests/end-to-end:
+    dependencies:
+      '@codemugs/analysis-worker':
+        specifier: workspace:*
+        version: link:../../apps/analysis-worker
+      '@codemugs/api':
+        specifier: workspace:*
+        version: link:../../apps/api
+      '@codemugs/archive':
+        specifier: workspace:*
+        version: link:../../packages/archive
+      '@codemugs/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@codemugs/configuration':
+        specifier: workspace:*
+        version: link:../../packages/configuration
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../../packages/logging
+      '@codemugs/sandbox-manager':
+        specifier: workspace:*
+        version: link:../../engineering/sandbox-manager
+      '@codemugs/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+
 packages:
 
   '@cacheable/memory@2.2.0':
