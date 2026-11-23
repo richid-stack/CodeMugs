@@ -16,7 +16,13 @@ import { createLogger } from "@codemugs/logging";
 import { createPool, type Pool } from "@codemugs/storage";
 import { adminDatabaseUrl, createTestDatabase, type TestDatabase } from "@codemugs/storage/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { archiveOfDirectory, standInSandbox, throwawayPrivateKey } from "./support.js";
+import {
+  archiveOfDirectory,
+  linesFoundIn,
+  sourceLinesOf,
+  standInSandbox,
+  throwawayPrivateKey,
+} from "./support.js";
 
 /**
  * The first slice, in one test: a request to the API connects a repository and asks for it to be
@@ -401,22 +407,38 @@ for (const flavour of flavours) {
       const everything: string[] = [];
       for (const id of [first, second]) {
         everything.push((await get(keys.reader, `/v1/analyses/${id}/graph`)).body);
+        const nodes: NodesBody["nodes"] = [];
         for (let after = -1; ;) {
           const page = await get<NodesBody>(
             keys.reader,
             `/v1/analyses/${id}/nodes?limit=1000${after < 0 ? "" : `&after=${String(after)}`}`,
           );
           everything.push(page.body);
+          nodes.push(...page.json().nodes);
           const next = page.json().next;
           if (next === undefined) break;
           after = next;
         }
+        // The edges too: what each node is joined to, which is where an import's text would be.
+        for (const node of nodes) {
+          everything.push(
+            (
+              await get(
+                keys.reader,
+                `/v1/analyses/${id}/nodes/${String(node.id)}/neighbours?limit=1000`,
+              )
+            ).body,
+          );
+        }
       }
       const text = everything.join("\n");
-      // Strings that are in the shop's source and are neither a path, a name nor a route.
-      for (const content of ["body_too_large", "invalid_json", "http://shop.invalid"]) {
-        expect(text).not.toContain(content);
-      }
+      // Every line of the shop's source that is long enough to mean something: all of the files that
+      // were analysed, not three strings that somebody thought of.
+      const lines = await sourceLinesOf(join(repositoryRoot, "tests/demo-shop"));
+      expect(lines.length).toBeGreaterThan(100);
+      expect(linesFoundIn(text, lines)).toEqual([]);
+      // That the check reads all of that, so that finding nothing means something.
+      expect(text.length).toBeGreaterThan(5_000);
     });
 
     it("shows the graph to the project that it belongs to and to no other: not another project of the organisation, not another organisation", async () => {
@@ -442,8 +464,11 @@ for (const flavour of flavours) {
       const logged = lines.join("\n");
       expect(logged).toContain("worker started");
       expect(logged).not.toContain("PRIVATE KEY");
-      expect(logged).not.toContain("body_too_large");
       expect(logged).not.toContain("postgres://");
+      // Nor any line of the shop's source, which is what the process had in its hands.
+      expect(
+        linesFoundIn(logged, await sourceLinesOf(join(repositoryRoot, "tests/demo-shop"))),
+      ).toEqual([]);
       // The unpacked and staged copies are removed, whatever happened.
       const left = (await readdir(workspace)).filter(
         (name) => name.startsWith("analysis-") || name.startsWith("checkout-"),

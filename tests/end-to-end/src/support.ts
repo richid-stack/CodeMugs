@@ -78,6 +78,40 @@ export async function archiveOfDirectory(root: string, top = "repo-0123abc"): Pr
   return tarball(entries);
 }
 
+/**
+ * The lines of source that a directory holds, trimmed and at least `minimum` characters long, so that
+ * finding one in an answer is not a matter of chance (`});` is in every answer that has code in it).
+ */
+export async function sourceLinesOf(root: string, minimum = 20): Promise<string[]> {
+  const lines = new Set<string>();
+  const walk = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+      } else if (entry.isFile()) {
+        for (const line of (await readFile(path, "utf8")).split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (trimmed.length >= minimum) lines.add(trimmed);
+        }
+      }
+    }
+  };
+  await walk(root);
+  return [...lines].sort();
+}
+
+/**
+ * The lines that are in the text, written as they are or as JSON writes them (with the quotes and
+ * backslashes escaped), because an answer is JSON and a line that has a quote in it would not be
+ * found as it was.
+ */
+export function linesFoundIn(text: string, lines: readonly string[]): string[] {
+  return lines.filter(
+    (line) => text.includes(line) || text.includes(JSON.stringify(line).slice(1, -1)),
+  );
+}
+
 /** An RSA key in the form that GitHub gives (a `.pem`), made here so that no key is in the repository. */
 export function throwawayPrivateKey(): string {
   return generateKeyPairSync("rsa", { modulusLength: 2048 })
