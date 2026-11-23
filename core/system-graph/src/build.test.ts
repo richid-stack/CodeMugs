@@ -1,7 +1,7 @@
 import type { RepositoryFacts } from "@codemugs/application-intelligence";
+import { GraphError } from "@codemugs/system-graph-read";
 import { describe, expect, it } from "vitest";
 import { buildGraph } from "./build.js";
-import { GraphError } from "./errors.js";
 import type { BuiltGraph } from "./model.js";
 import {
   LARGEST_RUN,

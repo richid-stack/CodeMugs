@@ -51,6 +51,15 @@ describe("what the API image holds", () => {
     expect([...needed].filter((name) => FORBIDDEN.includes(name))).toEqual([]);
   });
 
+  it("can read the graph: the package that reads it needs none of those", () => {
+    // ADR 0036: the read side of the graph is its own package, so that the routes that read a graph
+    // do not put the analyser in the image. Its walk reaches what it needs, and nothing forbidden.
+    const reading = closure(join(apiDirectory, "..", "..", "core", "system-graph-read"));
+    expect(reading).toContain("@codemugs/storage");
+    expect(reading).toContain("zod");
+    expect([...reading].filter((name) => FORBIDDEN.includes(name))).toEqual([]);
+  });
+
   it("would notice one: the graph package brings the analyser with it", () => {
     const graph = closure(join(apiDirectory, "..", "..", "core", "system-graph"));
     expect(graph).toContain("@codemugs/application-intelligence");

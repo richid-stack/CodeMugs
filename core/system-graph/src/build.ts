@@ -1,15 +1,13 @@
 import { createHash } from "node:crypto";
 import type { RepositoryFacts } from "@codemugs/application-intelligence";
-import { GraphError } from "./errors.js";
-import type {
-  BuiltEdge,
-  BuiltGraph,
-  BuiltNode,
-  EdgeKind,
-  JsonObject,
-  JsonValue,
-  NodeKind,
-} from "./model.js";
+import {
+  GraphError,
+  type EdgeKind,
+  type JsonObject,
+  type JsonValue,
+  type NodeKind,
+} from "@codemugs/system-graph-read";
+import type { BuiltEdge, BuiltGraph, BuiltNode } from "./model.js";
 
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 

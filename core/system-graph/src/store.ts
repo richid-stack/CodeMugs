@@ -1,8 +1,8 @@
 import { repositoryFactsSchema, type RepositoryFacts } from "@codemugs/application-intelligence";
 import { postgresErrorCode, type TenantClient } from "@codemugs/storage";
+import { GraphError } from "@codemugs/system-graph-read";
 import { z } from "zod";
 import { buildGraph } from "./build.js";
-import { GraphError } from "./errors.js";
 
 // A UUID is written in lower case once it has been checked. PostgreSQL gives it back that way, and
 // a retry that wrote it in capitals is the same retry.
