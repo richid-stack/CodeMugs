@@ -1,6 +1,6 @@
 import { ConfigError } from "@codemugs/configuration";
 import { describe, expect, it } from "vitest";
-import { loadGitHubAppConfig } from "./config.js";
+import { loadGitHubAppConfig, loadGitHubAppCredentials } from "./config.js";
 import {
   APP_ID,
   CLIENT_ID,
@@ -138,5 +138,58 @@ describe("loadGitHubAppConfig", () => {
 
   it("refuses an empty variable the same way as a missing one", () => {
     expect(issues(env({ [KEY]: "" }))[0]).toContain(KEY);
+  });
+});
+
+describe("loadGitHubAppCredentials", () => {
+  const credentials = (overrides: Record<string, string | undefined> = {}) => {
+    return Object.fromEntries(
+      Object.entries(env(overrides)).filter(
+        ([name]) => name !== "CODEMUGS_GITHUB_APP_INSTALLATION_ID",
+      ),
+    );
+  };
+
+  it("reads the app's own settings without an installation", () => {
+    const loaded = loadGitHubAppCredentials(credentials());
+    expect(loaded.appId).toBe(APP_ID);
+    expect(loaded.clientId).toBe(CLIENT_ID);
+    expect(loaded.privateKey.reveal()).toBe(testKeys().privatePem.trim());
+    expect(loaded).not.toHaveProperty("installationId");
+    expect(JSON.stringify(loaded)).not.toContain("BEGIN");
+  });
+
+  it("does not use an installation that the environment happens to have", () => {
+    expect(loadGitHubAppCredentials(env())).not.toHaveProperty("installationId");
+  });
+
+  it("restores the line breaks of a key that was kept with them written as \\n", () => {
+    const flat = testKeys().privatePem.trim().replaceAll("\n", "\\n");
+    expect(loadGitHubAppCredentials(credentials({ [KEY]: flat })).privateKey.reveal()).toBe(
+      testKeys().privatePem.trim(),
+    );
+  });
+
+  it("names each variable that is missing, and only those that it needs", () => {
+    let found: readonly string[] = [];
+    try {
+      loadGitHubAppCredentials({});
+    } catch (error) {
+      if (error instanceof ConfigError) found = error.issues;
+      else throw error;
+    }
+    expect(found).toHaveLength(3);
+    expect(found.join("\n")).not.toContain("INSTALLATION");
+  });
+
+  it("refuses a client secret where the private key goes, without printing it", () => {
+    let message = "";
+    try {
+      loadGitHubAppCredentials(credentials({ [KEY]: FAKE_CLIENT_SECRET }));
+    } catch (error) {
+      message = error instanceof Error ? error.message : "";
+    }
+    expect(message).toContain(KEY);
+    expect(message).not.toContain(FAKE_CLIENT_SECRET);
   });
 });

@@ -1,4 +1,5 @@
 export {
+  IMAGE_BY_DIGEST,
   SANDBOX_CEILINGS,
   SandboxRequestError,
   parseSandboxPolicy,

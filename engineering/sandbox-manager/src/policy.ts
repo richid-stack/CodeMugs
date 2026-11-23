@@ -24,7 +24,7 @@ const FLOORS = Object.freeze({ cpus: 0.01, memoryMb: 16, pids: 1, scratchMb: 1, 
  * content after it was reviewed, a digest cannot. Stricter than Docker's own grammar on purpose,
  * and it cannot start with a dash, so it can never be read as an option.
  */
-const IMAGE_BY_DIGEST =
+export const IMAGE_BY_DIGEST =
   /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$/;
 
 /**

@@ -1,5 +1,5 @@
 import { createLogger } from "@codemugs/logging";
-import type { WorkerEvent } from "@codemugs/jobs";
+import type { WorkerEvent } from "./worker.js";
 import { describe, expect, it } from "vitest";
 import { logWorkerEvent } from "./events.js";
 

@@ -26,6 +26,10 @@ export interface Harness {
   readonly dispatcher: Pool;
   /** A superuser, for looking at what is really stored. */
   readonly admin: Pool;
+  /** The addresses of the three, for a process that is given its own connections. */
+  readonly urls: { readonly app: string; readonly dispatcher: string; readonly admin: string };
+  /** The name of the database, for asking the server what is connected to it. */
+  readonly databaseName: string;
   /** An organisation whose project is a repository, with its installation bound as an operator does. */
   tenant(name: string, installationId: number, owner: string, repository: string): Promise<Tenant>;
   close(): Promise<void>;
@@ -49,6 +53,8 @@ export async function startHarness(): Promise<Harness> {
       app,
       dispatcher,
       admin,
+      urls: { app: database.appUrl, dispatcher: database.dispatcherUrl, admin: database.adminUrl },
+      databaseName: database.name,
       async tenant(name, installationId, owner, repository) {
         const organisationId = (await createOrganisation(app, { name })).id;
         const project = await createProject(app, organisationId, {

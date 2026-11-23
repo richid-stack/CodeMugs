@@ -1,6 +1,11 @@
 export { GitHubError, type GitHubErrorCode } from "./errors.js";
 export { createAppJwt, type AppJwtOptions } from "./jwt.js";
-export { loadGitHubAppConfig, type GitHubAppConfig } from "./config.js";
+export {
+  loadGitHubAppConfig,
+  loadGitHubAppCredentials,
+  type GitHubAppConfig,
+  type GitHubAppCredentials,
+} from "./config.js";
 export {
   GitHubApp,
   InstallationClient,

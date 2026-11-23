@@ -1,6 +1,6 @@
 # @codemugs/api
 
-The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and the endpoints behind it: `GET /v1/whoami`, `POST /v1/events` (event ingestion, for keys with the `events:write` scope) and the routes that connect a repository and ask for it to be analysed (`analysis:write`, `analysis:read`). Nothing reads events back yet, and nothing runs an analysis yet: the process that does is the next part, so these routes record and queue and no more.
+The control plane's HTTP API. Health endpoints, API key authentication for everything under `/v1`, and the endpoints behind it: `GET /v1/whoami`, `POST /v1/events` (event ingestion, for keys with the `events:write` scope) and the routes that connect a repository and ask for it to be analysed (`analysis:write`, `analysis:read`). Nothing reads events back yet. The analysis routes record and queue; the process that does the analysis is [`@codemugs/analysis-worker`](../analysis-worker/README.md), a separate process, and nothing reads a graph back yet.
 
 **Status:** Phase 1 · Foundation (started)
 
