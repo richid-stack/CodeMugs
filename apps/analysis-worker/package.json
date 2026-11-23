@@ -18,16 +18,22 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "start": "node dist/main.js",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts"
   },
   "dependencies": {
     "@codemugs/application-intelligence": "workspace:*",
     "@codemugs/archive": "workspace:*",
+    "@codemugs/configuration": "workspace:*",
     "@codemugs/github": "workspace:*",
     "@codemugs/jobs": "workspace:*",
+    "@codemugs/logging": "workspace:*",
     "@codemugs/repository-analysis": "workspace:*",
+    "@codemugs/sandbox-manager": "workspace:*",
     "@codemugs/storage": "workspace:*",
-    "@codemugs/system-graph": "workspace:*"
+    "@codemugs/system-graph": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@codemugs/auth": "workspace:*"

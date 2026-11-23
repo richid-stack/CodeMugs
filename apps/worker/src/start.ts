@@ -1,7 +1,6 @@
 import type { WorkerConfig } from "@codemugs/configuration";
-import { runWorker, type JobHandler } from "@codemugs/jobs";
+import { logWorkerEvent, runWorker, type JobHandler, type WorkerHandle } from "@codemugs/jobs";
 import { createPool } from "@codemugs/storage";
-import { logWorkerEvent } from "./events.js";
 import { handlers as registeredHandlers } from "./handlers.js";
 import { describeFailure, type Logger } from "@codemugs/logging";
 import { verifyDatabase } from "./preflight.js";
@@ -9,15 +8,7 @@ import { verifyDatabase } from "./preflight.js";
 /** What the worker's connections are called in `pg_stat_activity`. */
 export const APPLICATION_NAME = "codemugs-worker";
 
-export interface WorkerHandle {
-  /**
-   * Stops taking jobs, waits for the ones in progress and closes the database connections.
-   * Safe to call more than once. Rejects if the worker had already failed.
-   */
-  stop(): Promise<void>;
-  /** Settles when the worker has stopped, and rejects if it stopped because of a failure. */
-  finished: Promise<void>;
-}
+export type { WorkerHandle };
 
 export interface StartOptions {
   config: WorkerConfig;

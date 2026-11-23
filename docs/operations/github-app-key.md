@@ -59,3 +59,7 @@ An app may have two keys at once, so there is no gap between steps 2 and 5.
 ## What this does not cover
 
 Private repositories (the only repository it has been pointed at is this one, which is public), more than one installation, and the tokens that will be made for customers. Those need their own steps when they exist.
+
+## Where a process reads the key
+
+The process that analyses repositories ([`@codemugs/analysis-worker`](../../apps/analysis-worker/README.md), [ADR 0035](../architecture/decisions/0035-the-process-that-analyses-repositories.md)) reads the same key from the environment variable `CODEMUGS_GITHUB_APP_PRIVATE_KEY`, with `CODEMUGS_GITHUB_APP_ID` and `CODEMUGS_GITHUB_APP_CLIENT_ID`. It takes no installation id from its environment: the installation comes from the connection that the project made. At the start it checks that the key can sign (an RSA key of at least 2048 bits) without asking GitHub, and refuses to start with the code `github_key_unusable` if it cannot. It then removes the variable from its own environment, so that a program started by it does not inherit the key, and it never logs the key. Where the variable comes from in a deployment is not decided, because hosting is not. Changing the key (above) means restarting that process. Nothing has run it against a real customer.

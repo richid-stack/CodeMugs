@@ -80,12 +80,17 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
 }
 
 /** A connection string that is required: unset and empty both count as missing. */
-const requiredPostgresUrl = z.preprocess(
+export const requiredPostgresUrl = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z
     .string({ error: "is required" })
     .regex(/^postgres(ql)?:\/\//, "must be a postgres:// or postgresql:// URL"),
 );
+
+/** The setting of how much a process logs, for a process that has settings of its own. */
+export const logLevelSetting = z
+  .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+  .default("info");
 
 const workerEnvSchema = z
   .object({

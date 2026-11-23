@@ -1,4 +1,5 @@
 // Shared by this package's tests. Not part of the build.
+import { generateKeyPairSync } from "node:crypto";
 import { parseRepositoryFacts, type RepositoryFacts } from "@codemugs/application-intelligence";
 import type { ClaimedJob, LongJobContext } from "@codemugs/jobs";
 import type { AnalysisPlan } from "@codemugs/repository-analysis";
@@ -122,5 +123,33 @@ export function fakeGitHub(
       calls.opened.push({ installationId, name });
       return Promise.resolve(reader);
     },
+  };
+}
+
+let key: string | undefined;
+
+/** An RSA key in the form that GitHub gives (a `.pem`), made once for the tests that need one. */
+export function testPrivateKey(): string {
+  key ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
+    .privateKey.export({ type: "pkcs1", format: "pem" })
+    .toString()
+    .trim();
+  return key;
+}
+
+/** An environment that the process accepts. A test changes what it is about. */
+export function validEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return {
+    DATABASE_URL: "postgres://codemugs_app:app-password-1@db.internal:5432/codemugs",
+    DISPATCHER_DATABASE_URL:
+      "postgres://codemugs_dispatcher:dispatcher-password-2@db.internal:5432/codemugs",
+    CODEMUGS_GITHUB_APP_ID: "5776596",
+    CODEMUGS_GITHUB_APP_CLIENT_ID: "Iv23lipC397du816RxiY",
+    CODEMUGS_GITHUB_APP_PRIVATE_KEY: testPrivateKey(),
+    ANALYSIS_SANDBOX_DRIVER: "docker",
+    ANALYSIS_SANDBOX_MINIMUM_ISOLATION: "hardened-container",
+    ANALYSIS_SANDBOX_IMAGE: `docker.io/library/node@sha256:${"a".repeat(64)}`,
+    ANALYSIS_WORKSPACE_ROOT: "/var/lib/codemugs/analysis",
+    ...overrides,
   };
 }

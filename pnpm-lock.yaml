@@ -44,21 +44,33 @@ importers:
       '@codemugs/archive':
         specifier: workspace:*
         version: link:../../packages/archive
+      '@codemugs/configuration':
+        specifier: workspace:*
+        version: link:../../packages/configuration
       '@codemugs/github':
         specifier: workspace:*
         version: link:../../integrations/github
       '@codemugs/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../../packages/logging
       '@codemugs/repository-analysis':
         specifier: workspace:*
         version: link:../../core/repository-analysis
+      '@codemugs/sandbox-manager':
+        specifier: workspace:*
+        version: link:../../engineering/sandbox-manager
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage
       '@codemugs/system-graph':
         specifier: workspace:*
         version: link:../../core/system-graph
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@codemugs/auth':
         specifier: workspace:*
@@ -228,6 +240,9 @@ importers:
 
   packages/jobs:
     dependencies:
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../logging
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../storage

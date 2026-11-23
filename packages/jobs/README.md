@@ -2,7 +2,7 @@
 
 A durable job queue in PostgreSQL, and a worker that runs the jobs. Background work that survives a crash, can be run again, and never leaves the tenant that owns it.
 
-**Status:** Phase 1 · Foundation (started). The library and its tests exist. The process that runs it is [`@codemugs/worker`](../../apps/worker/README.md) ([ADR 0014](../../docs/architecture/decisions/0014-worker-process.md)). Ingestion enqueues a job for every stored batch and one handler exists, for hourly counts ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md), in [`@codemugs/ingestion`](../../apps/ingestion/README.md)). Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
+**Status:** Phase 1 · Foundation (started). The library and its tests exist. Two processes run it: [`@codemugs/worker`](../../apps/worker/README.md) for events ([ADR 0014](../../docs/architecture/decisions/0014-worker-process.md)) and [`@codemugs/analysis-worker`](../../apps/analysis-worker/README.md) for repositories ([ADR 0035](../../docs/architecture/decisions/0035-the-process-that-analyses-repositories.md)). Ingestion enqueues a job for every stored batch and one handler exists, for hourly counts ([ADR 0013](../../docs/architecture/decisions/0013-event-processing.md), in [`@codemugs/ingestion`](../../apps/ingestion/README.md)). Decision: [ADR 0012](../../docs/architecture/decisions/0012-jobs-and-cross-tenant-claiming.md). The table is in [`@codemugs/storage`](../storage/README.md).
 
 ## What is here
 
@@ -12,6 +12,7 @@ A durable job queue in PostgreSQL, and a worker that runs the jobs. Background w
 - `longJob(handler)`: registers a job that takes long (a download, a sandbox, a model). It works with **no transaction open**, reads through `context.read(body)` (a short transaction, always as the job's organisation), and returns a commit that the worker runs, with the job's completion, in one transaction. See [ADR 0030](../../docs/architecture/decisions/0030-long-jobs.md).
 - `JobFailure(code, { retryable? })`: throw it from a handler to fail with a short stable code.
 - `claimJobs`, `completeJob`, `failJob`: the steps `runWorker` is made of, for tests and for anything that needs them separately.
+- What a process around `runWorker` needs, so that each process does not write it again: `superviseWorker({ logger, shutdownTimeoutMs, start })` (the signals `SIGTERM` and `SIGINT`, one time limit for stopping that starts with the first signal, exit code 0 after an orderly stop and 1 otherwise, a fatal log and exit 1 on an uncaught exception or an unhandled rejection, and a stop that arrives while the process is still starting), `verifyWorkerDatabase(pools, probes)` with `WorkerStartupError` (each connection is the role it should be, the role has none of the powers that the role contract forbids and belongs to no other role, and the tables that the handlers use are there), and `logWorkerEvent(logger, event)` (a log line of ids, the kind, the attempt and a short code, never a message).
 
 ```ts
 const controller = new AbortController();

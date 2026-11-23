@@ -21,6 +21,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@codemugs/logging": "workspace:*",
     "@codemugs/storage": "workspace:*"
   }
 }

@@ -1,6 +1,6 @@
 # @codemugs/worker
 
-The process that runs queued jobs. It takes due jobs from the queue ([`@codemugs/jobs`](../../packages/jobs/README.md)), runs the handler for each kind in the tenant's own transaction, and records the result.
+The process that runs queued jobs. It takes due jobs from the queue ([`@codemugs/jobs`](../../packages/jobs/README.md)), runs the handler for each kind in the tenant's own transaction, and records the result. It never reads repository contents: the job that does runs in [`@codemugs/analysis-worker`](../analysis-worker/README.md), a process of its own.
 
 **Status:** Phase 1 · Foundation (started). It runs one kind of job, `events.aggregate`: the hourly counts of [ADR 0013](../../docs/architecture/decisions/0013-event-processing.md). There is no container image, no health endpoint and no deployment yet. Decision: [ADR 0014](../../docs/architecture/decisions/0014-worker-process.md).
 
@@ -10,6 +10,10 @@ The process that runs queued jobs. It takes due jobs from the queue ([`@codemugs
 2. Connects as two different database roles (`DATABASE_URL`, the application role, and `DISPATCHER_DATABASE_URL`, the dispatcher role) and checks them before it takes any job: each connection must be the role it should be, that role must have none of the powers the role contract forbids and belong to no other role, and the database must have what the handlers use. A failed check ends the process with exit code 1 and a log line that names the variable and a short code.
 3. Takes jobs and runs them, up to `WORKER_CONCURRENCY` at a time, until it is told to stop.
 4. On `SIGTERM` or `SIGINT` it takes no new job, waits for the jobs in progress, closes its connections and exits with code 0. A signal that arrives while it is still connecting is remembered and acted on as soon as it has started, so it ends the same way. The time for stopping starts with the first signal, so a database that does not answer cannot hold the program longer than `SHUTDOWN_TIMEOUT_MS`; it then exits with code 1. A job still running after `SHUTDOWN_TIMEOUT_MS` is abandoned and the process exits with code 1. An abandoned job leaves no trace in the data, because its transaction ends with the connection, and another worker takes the job when its lease runs out.
+
+## Shared code
+
+The supervision of the process (signals, the time allowed for stopping, the exit codes, what happens on an uncaught exception), the checks of the database roles and the log of job events are in [`@codemugs/jobs`](../../packages/jobs/README.md) (`superviseWorker`, `verifyWorkerDatabase`, `logWorkerEvent`), because the process that analyses repositories uses them too ([ADR 0035](../../docs/architecture/decisions/0035-the-process-that-analyses-repositories.md)). What stays here is what is particular to this process: its configuration, its handlers and the probes of the tables they use. The behaviour is unchanged, and the process tests of this package run the built program.
 
 ## Logging
 
@@ -61,5 +65,4 @@ The unit tests need nothing. The database tests need the same setup as `@codemug
 - No health or readiness endpoint, and no heartbeat. An orchestrator can tell the process is gone, not that it is stuck.
 - No metrics, and no alert on dead jobs (release gate 13).
 - No retry of the first connection: a database that is not up yet fails the start, and the orchestrator restarts the process.
-- The path of an uncaught exception or unhandled rejection (log and exit 1) has no test.
 - Jobs of a kind this process has no handler for stay queued. Nothing reports them.
