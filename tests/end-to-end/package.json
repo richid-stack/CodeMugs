@@ -1,0 +1,21 @@
+{
+  "name": "@codemugs/end-to-end",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The whole path of the first slice, in one test: a request to the API, the process that analyses repositories, and the graph read back through the API.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@codemugs/analysis-worker": "workspace:*",
+    "@codemugs/api": "workspace:*",
+    "@codemugs/archive": "workspace:*",
+    "@codemugs/auth": "workspace:*",
+    "@codemugs/configuration": "workspace:*",
+    "@codemugs/logging": "workspace:*",
+    "@codemugs/sandbox-manager": "workspace:*",
+    "@codemugs/storage": "workspace:*"
+  }
+}
