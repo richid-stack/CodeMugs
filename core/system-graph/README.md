@@ -6,6 +6,8 @@ The graph of one project's repository, made from the facts that [`@codemugs/appl
 
 A graph is a **run**: one analysis, stored once and never changed. A newer analysis is a new run, and the run of a project that was stored last is the graph now. The facts are a customer's names and are data, never instructions (invariant 2); no content and no value is in them.
 
+**Reading is a package of its own.** `getRun`, `latestRun`, `findNode`, `listNodes`, `neighbours`, `importClosure`, the kinds, the types of what is read and `GraphError` are in [`@codemugs/system-graph-read`](../system-graph-read/README.md), which needs neither the analyser nor the sandbox, so that the API can read a graph without holding them ([ADR 0036](../../docs/architecture/decisions/0036-reading-the-graph-apart-from-building-it.md)). This package re-exports all of it, so the names below are still imported from here. It is the package that builds a graph from facts and stores it, and its tests read back what it stored.
+
 ## Interface
 
 ```ts

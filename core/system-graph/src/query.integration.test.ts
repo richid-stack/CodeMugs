@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { withTenant, type TenantClient } from "@codemugs/storage";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildGraph } from "./build.js";
-import { describeDatabase, graphErrorCode, startHarness } from "./db-harness.js";
-import type { Harness, Tenant } from "./db-harness.js";
 import {
   findNode,
   getRun,
@@ -13,7 +10,10 @@ import {
   MAX_DEPTH,
   MAX_LIMIT,
   neighbours,
-} from "./query.js";
+} from "@codemugs/system-graph-read";
+import { buildGraph } from "./build.js";
+import { describeDatabase, graphErrorCode, startHarness } from "./db-harness.js";
+import type { Harness, Tenant } from "./db-harness.js";
 import { saveAnalysis } from "./store.js";
 import { importOf, makeFacts, shopFacts } from "./test-harness.js";
 
