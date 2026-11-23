@@ -38,5 +38,6 @@
 | [0034](0034-analysis-routes.md)                                    | The routes that connect a repository and ask for an analysis                       | Accepted                     |
 | [0035](0035-the-process-that-analyses-repositories.md)             | The process that analyses repositories                                             | Accepted (image not decided) |
 | [0036](0036-reading-the-graph-apart-from-building-it.md)           | Reading the graph apart from building it: a package of its own                     | Accepted                     |
+| [0037](0037-graph-routes.md)                                       | The routes that read a graph                                                       | Accepted                     |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

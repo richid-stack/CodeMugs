@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { bearerToken, type Authenticator } from "../authentication.js";
 import type { AnalysisService } from "../analysis.js";
+import type { GraphService } from "../graph.js";
 import type { EventIngester } from "../ingestion.js";
 import { registerAnalysisRoutes } from "./analysis.js";
 import { registerEventRoutes } from "./events.js";
+import { registerGraphRoutes } from "./graph.js";
 
 export interface V1RoutesOptions {
   /** Without one, every /v1 route answers 503: the API refuses to guess who is calling. */
@@ -12,6 +14,8 @@ export interface V1RoutesOptions {
   ingester: EventIngester | undefined;
   /** Without one, the repository and analysis routes answer 503. */
   analysis: AnalysisService | undefined;
+  /** Without one, the routes that read a graph answer 503. */
+  graph: GraphService | undefined;
 }
 
 /**
@@ -26,7 +30,7 @@ export interface V1RoutesOptions {
  */
 export function registerV1Routes(
   app: FastifyInstance,
-  { authenticator, ingester, analysis }: V1RoutesOptions,
+  { authenticator, ingester, analysis, graph }: V1RoutesOptions,
 ): void {
   void app.register(
     (v1, _options, done) => {
@@ -93,6 +97,7 @@ export function registerV1Routes(
 
       registerEventRoutes(v1, { ingester });
       registerAnalysisRoutes(v1, { analysis });
+      registerGraphRoutes(v1, { graph });
 
       done();
     },

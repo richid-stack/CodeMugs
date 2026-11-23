@@ -93,6 +93,9 @@ importers:
       '@codemugs/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@codemugs/system-graph-read':
+        specifier: workspace:*
+        version: link:../../core/system-graph-read
       '@fastify/helmet':
         specifier: 13.2.0
         version: 13.2.0
