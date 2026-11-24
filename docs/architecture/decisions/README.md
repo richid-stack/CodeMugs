@@ -40,5 +40,6 @@
 | [0036](0036-reading-the-graph-apart-from-building-it.md)           | Reading the graph apart from building it: a package of its own                     | Accepted                     |
 | [0037](0037-graph-routes.md)                                       | The routes that read a graph                                                       | Accepted                     |
 | [0038](0038-the-test-of-the-whole-path.md)                         | The test of the whole path                                                         | Accepted                     |
+| [0039](0039-the-model-gateway.md)                                  | The model gateway                                                                  | Accepted for the first part  |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

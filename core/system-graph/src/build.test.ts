@@ -633,7 +633,8 @@ describe("buildGraph with facts that cannot be trusted", () => {
     const seconds = (performance.now() - started) / 1000;
     expect(built.nodes).toHaveLength(20_000);
     expect(seconds).toBeLessThan(10);
-  });
+    // The limit above is the test's; the test runner's own, of five seconds, would end it on a busy machine first.
+  }, 60_000);
 
   it("is quick for the largest answer that the analysis can give, with every list at its limit", () => {
     const facts = largestFacts();
@@ -646,5 +647,6 @@ describe("buildGraph with facts that cannot be trusted", () => {
     // It takes a couple of seconds. A limit of this size is there to find a cost that grows with the
     // square of the answer, which takes minutes, and not to measure the machine.
     expect(seconds).toBeLessThan(20);
-  });
+    // The limit above is the test's; the test runner's own, of five seconds, ended it on a busy CI machine first.
+  }, 60_000);
 });

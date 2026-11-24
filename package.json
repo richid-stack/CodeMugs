@@ -13,7 +13,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "eslint .",
+    "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:workflows": "node scripts/check-workflow-pins.mjs && node --test \"scripts/*.test.mjs\"",
