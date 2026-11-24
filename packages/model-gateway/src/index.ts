@@ -1,6 +1,6 @@
 export { costMicros, estimateTokens } from "./cost.js";
 export { ModelError, ProviderFailure } from "./errors.js";
-export type { ModelErrorCode, ProviderFailureKind } from "./errors.js";
+export type { ModelErrorCode, ModelUsage, ProviderFailureKind } from "./errors.js";
 export { createModelGateway, GATEWAY_LIMITS } from "./gateway.js";
 export type { GatewayOptions, ModelGateway } from "./gateway.js";
 export { createMockProvider } from "./mock-provider.js";

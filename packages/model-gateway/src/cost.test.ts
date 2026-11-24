@@ -56,11 +56,19 @@ describe("the cost of a call", () => {
 });
 
 describe("the guess of the tokens in a text", () => {
-  it("is three characters to a token, rounded up", () => {
-    expect(estimateTokens(0)).toBe(0);
-    expect(estimateTokens(1)).toBe(1);
-    expect(estimateTokens(3)).toBe(1);
-    expect(estimateTokens(4)).toBe(2);
-    expect(estimateTokens(300)).toBe(100);
+  it("is three ASCII characters to a token, rounded up", () => {
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("a")).toBe(1);
+    expect(estimateTokens("abc")).toBe(1);
+    expect(estimateTokens("abcd")).toBe(2);
+    expect(estimateTokens("x".repeat(300))).toBe(100);
+  });
+
+  it("is two tokens for every character outside ASCII, which Chinese, Japanese and Korean text can need", () => {
+    expect(estimateTokens("日本語")).toBe(6);
+    expect(estimateTokens("é")).toBe(2);
+    expect(estimateTokens("abc日本")).toBe(1 + 4);
+    // An emoji is two UTF-16 code units, so four, and no text is taken for less than it is.
+    expect(estimateTokens("😀")).toBe(4);
   });
 });

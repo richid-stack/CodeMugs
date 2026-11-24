@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Logger } from "@codemugs/logging";
 import { costMicros, estimateTokens, isValidPrice } from "./cost.js";
-import { ModelError, ProviderFailure } from "./errors.js";
+import { ModelError, ProviderFailure, type ModelErrorCode, type ModelUsage } from "./errors.js";
 import type { ModelPolicy } from "./policy.js";
 import { redact } from "./redact.js";
 import { renderPrompt } from "./render.js";
@@ -118,28 +118,55 @@ function checkRequest<T>(context: CallContext, request: ModelRequest<T>): void {
 }
 
 /** One surrounding code fence is allowed, because models add one; anything else that is not JSON is not. */
-function parseJson(text: string): unknown {
+function parseJson(
+  text: string,
+): { readonly ok: true; readonly value: unknown } | { readonly ok: false } {
   let body = text.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*)\n```$/.exec(body);
   if (fenced?.[1] !== undefined) body = fenced[1];
   try {
-    return JSON.parse(body) as unknown;
+    return { ok: true, value: JSON.parse(body) as unknown };
   } catch {
-    throw new ModelError("output_invalid");
+    return { ok: false };
   }
 }
 
-function checkResponse(response: ProviderResponse, maxOutputTokens: number): void {
-  const counted =
+/** Whether the provider said what it used, in whole numbers. A provider that does not cannot be accounted. */
+function hasUsage(response: ProviderResponse): boolean {
+  return (
+    typeof response.text === "string" &&
     Number.isSafeInteger(response.inputTokens) &&
     response.inputTokens >= 0 &&
     Number.isSafeInteger(response.outputTokens) &&
-    response.outputTokens >= 0;
-  // A provider that does not say what it used cannot be accounted, which is a fault of the adapter.
-  if (!counted || typeof response.text !== "string") throw new ModelError("provider_unavailable");
-  if (response.finish === "refused") throw new ModelError("refused");
-  if (response.finish === "length") throw new ModelError("output_truncated");
-  if (response.text.length > maxOutputTokens * 16) throw new ModelError("output_invalid");
+    response.outputTokens >= 0
+  );
+}
+
+/** Why an answer that was given cannot be used, if it cannot, before its content is looked at. */
+function answerFault(
+  response: ProviderResponse,
+  maxOutputTokens: number,
+): ModelErrorCode | undefined {
+  if (response.finish === "refused") return "refused";
+  if (response.finish === "length") return "output_truncated";
+  // An adapter that reports more output than was allowed, or an answer far longer than the limit, is not to be trusted.
+  if (response.outputTokens > maxOutputTokens) return "provider_unavailable";
+  if (response.text.length > maxOutputTokens * 16) return "output_invalid";
+  return undefined;
+}
+
+/** What goes in a log of a request that has not been checked: its task and organisation only if they are well formed. */
+function loggable<T>(
+  context: CallContext,
+  request: ModelRequest<T>,
+): { task: string; organisationId: string } {
+  return {
+    task: typeof request.task === "string" && NAME.test(request.task) ? request.task : "invalid",
+    organisationId:
+      typeof context.organisationId === "string" && ORGANISATION.test(context.organisationId)
+        ? context.organisationId
+        : "invalid",
+  };
 }
 
 export function createModelGateway(options: GatewayOptions): ModelGateway {
@@ -163,11 +190,14 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
         if (context.signal?.aborted) throw new ModelError("aborted");
 
         // 1. What may leave the platform. A class that the policy does not name does not.
+        // The wait for the policy is given up when the caller leaves, and the caller is looked at once more just before the provider is called (step 5).
         let permitted: ReadonlySet<DataClass>;
         try {
-          permitted = await options.policy.permittedClasses(context.organisationId);
+          const pending = options.policy.permittedClasses(context.organisationId);
+          permitted =
+            context.signal === undefined ? await pending : await abortable(pending, context.signal);
         } catch {
-          throw new ModelError("policy_unavailable");
+          throw new ModelError(context.signal?.aborted ? "aborted" : "policy_unavailable");
         }
         if (request.data.some((part) => !permitted.has(part.dataClass))) {
           throw new ModelError("not_permitted");
@@ -194,15 +224,18 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
 
         // 4. A provider that can take it.
         const needed =
-          estimateTokens(
-            prompt.system.length + prompt.user.length + JSON.stringify(jsonSchema).length,
-          ) + request.maxOutputTokens;
+          estimateTokens(prompt.system) +
+          estimateTokens(prompt.user) +
+          estimateTokens(JSON.stringify(jsonSchema)) +
+          request.maxOutputTokens;
         provider = options.providers.find(
           ({ capabilities }) =>
             needed <= capabilities.maxContextTokens &&
             request.maxOutputTokens <= capabilities.maxOutputTokens,
         );
         if (provider === undefined) throw new ModelError("no_capable_provider");
+        // Nothing is sent for a caller who has gone, however long the steps before took.
+        if (context.signal?.aborted) throw new ModelError("aborted");
 
         // 5. The call, given up when the time is up or the caller leaves, whatever the adapter does.
         const timeout = AbortSignal.timeout(timeoutMs);
@@ -228,15 +261,33 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
           throw new ModelError("provider_unavailable");
         }
 
-        // 6. The answer is checked, and is data until it has been.
-        checkResponse(response, request.maxOutputTokens);
-        const parsed = request.output.safeParse(parseJson(response.text));
-        if (!parsed.success) throw new ModelError("output_invalid");
+        // 6. What the call used is worked out first, because it is billed whether or not the answer can be
+        // used, and a failure from here on carries it.
+        if (!hasUsage(response)) throw new ModelError("provider_unavailable");
+        let cost: number;
+        try {
+          cost = costMicros(response.inputTokens, response.outputTokens, provider.price);
+        } catch {
+          throw new ModelError("provider_unavailable");
+        }
+        const used: ModelUsage = {
+          provider: provider.name,
+          model: provider.model,
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          costMicros: cost,
+        };
 
-        const cost = costMicros(response.inputTokens, response.outputTokens, provider.price);
+        // 7. The answer is checked, and is data until it has been.
+        const fault = answerFault(response, request.maxOutputTokens);
+        if (fault !== undefined) throw new ModelError(fault, used);
+        const json = parseJson(response.text);
+        if (!json.ok) throw new ModelError("output_invalid", used);
+        const parsed = request.output.safeParse(json.value);
+        if (!parsed.success) throw new ModelError("output_invalid", used);
+
         options.logger?.info("model call", {
-          task: request.task,
-          organisationId: context.organisationId,
+          ...loggable(context, request),
           provider: provider.name,
           model: provider.model,
           outcome: "ok",
@@ -260,10 +311,16 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
         const failure =
           error instanceof ModelError ? error : new ModelError("provider_unavailable");
         options.logger?.warn("model call failed", {
-          task: request.task,
-          organisationId: context.organisationId,
+          ...loggable(context, request),
           ...(provider === undefined ? {} : { provider: provider.name, model: provider.model }),
           outcome: failure.code,
+          ...(failure.usage === undefined
+            ? {}
+            : {
+                inputTokens: failure.usage.inputTokens,
+                outputTokens: failure.usage.outputTokens,
+                costMicros: failure.usage.costMicros,
+              }),
           durationMs: now() - started,
         });
         throw failure;

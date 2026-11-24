@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createLogger } from "@codemugs/logging";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -440,8 +441,13 @@ describe("an answer that cannot be used", () => {
     ["an empty answer", { text: "" }, "output_invalid"],
     [
       "an answer that is valid but longer than its limit",
-      { text: `${JSON.stringify(GOOD)}${" ".repeat(500 * 16)}` },
+      { text: `${JSON.stringify(GOOD)}${" ".repeat(500 * 16)}`, outputTokens: 100 },
       "output_invalid",
+    ],
+    [
+      "an adapter that reports more output than was allowed",
+      { text: JSON.stringify(GOOD), outputTokens: 501 },
+      "provider_unavailable",
     ],
     [
       "usage that is not a count",
@@ -468,7 +474,11 @@ describe("an answer that cannot be used", () => {
 
   it("takes an answer that is exactly as long as the limit allows", async () => {
     const text = JSON.stringify(GOOD);
-    const { gateway } = gatewayWith([{ text: text + " ".repeat(500 * 16 - text.length) }]);
+    const { gateway } = gatewayWith([
+      { text: text + " ".repeat(500 * 16 - text.length), outputTokens: 100 },
+      { text, outputTokens: 500 },
+    ]);
+    expect((await gateway.call({ organisationId: ORG }, request())).value).toEqual(GOOD);
     expect((await gateway.call({ organisationId: ORG }, request())).value).toEqual(GOOD);
   });
 });
@@ -608,5 +618,304 @@ describe("setting the gateway up", () => {
         createModelGateway({ providers: [createMockProvider()], policy, timeoutMs }),
       ).toThrow(RangeError);
     }
+  });
+});
+
+describe("a call that was billed and gave nothing to use", () => {
+  const MARKER = "MARKER-Zq81xLm20pQw93";
+  // The mock's price: a dollar a million tokens in, five a million out. 1,000 in and 200 out is 1,000 + 1,000.
+  const used = {
+    provider: "mock",
+    model: "mock-model",
+    inputTokens: 1_000,
+    outputTokens: 200,
+    costMicros: 2_000,
+  };
+  const counted = { inputTokens: 1_000, outputTokens: 200 };
+
+  const steps: Array<[string, MockStep, ModelErrorCode]> = [
+    ["a refusal", { text: "no", finish: "refused", ...counted }, "refused"],
+    ["an answer cut short", { text: "{", finish: "length", ...counted }, "output_truncated"],
+    ["text that is not JSON", { text: `${MARKER} is not JSON`, ...counted }, "output_invalid"],
+    [
+      "JSON of the wrong shape",
+      { text: JSON.stringify({ summary: MARKER }), ...counted },
+      "output_invalid",
+    ],
+    [
+      "more output than was allowed",
+      { text: JSON.stringify(GOOD), inputTokens: 1_000, outputTokens: 501 },
+      "provider_unavailable",
+    ],
+  ];
+
+  it.each(steps)(
+    "keeps what %s used, in the error, as numbers and names",
+    async (_name, step, code) => {
+      const { gateway } = gatewayWith([step]);
+      const error = await failureOf(gateway.call({ organisationId: ORG }, request()));
+      expect(error.code).toBe(code);
+      const expected =
+        step === steps[4]?.[1] ? { ...used, outputTokens: 501, costMicros: 1_000 + 2_505 } : used;
+      expect(error.usage).toEqual(expected);
+      expect(JSON.stringify(error.usage)).not.toContain(MARKER);
+    },
+  );
+
+  it("logs the tokens and cost of such a call with its failure", async () => {
+    const lines: string[] = [];
+    const { gateway } = gatewayWith([{ text: "not json", ...counted }], {
+      logger: createLogger("debug", (line) => lines.push(line)),
+    });
+    await failureOf(gateway.call({ organisationId: ORG }, request()));
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      msg: "model call failed",
+      outcome: "output_invalid",
+      inputTokens: 1_000,
+      outputTokens: 200,
+      costMicros: 2_000,
+    });
+  });
+
+  it("has no usage when nothing was answered: the request, the policy, the provider, the clock and the caller", async () => {
+    const failures: Array<ModelError> = [];
+    failures.push(
+      await failureOf(
+        gatewayWith([{ value: GOOD }]).gateway.call({ organisationId: "x" }, request()),
+      ),
+    );
+    const denied = createModelGateway({ providers: [createMockProvider()], policy: denyAll });
+    failures.push(
+      await failureOf(denied.call({ organisationId: ORG }, request({ data: [file("a", "x")] }))),
+    );
+    failures.push(
+      await failureOf(
+        gatewayWith([{ fail: "unavailable" }]).gateway.call({ organisationId: ORG }, request()),
+      ),
+    );
+    failures.push(
+      await failureOf(
+        gatewayWith([{ hang: true }], { timeoutMs: 20 }).gateway.call(
+          { organisationId: ORG },
+          request(),
+        ),
+      ),
+    );
+    failures.push(
+      await failureOf(
+        gatewayWith([{ text: "{}", inputTokens: -1 }]).gateway.call(
+          { organisationId: ORG },
+          request(),
+        ),
+      ),
+    );
+    expect(failures.map((failure) => failure.usage)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("gives the usage of a call that worked in its result, as it always did", async () => {
+    const { gateway } = gatewayWith([{ text: JSON.stringify(GOOD), ...counted }]);
+    const result = await gateway.call({ organisationId: ORG }, request());
+    expect(result).toMatchObject({ inputTokens: 1_000, outputTokens: 200, costMicros: 2_000 });
+  });
+});
+
+describe("what a request that was refused leaves in the log", () => {
+  const MARKER = "MARKER-Zq81xLm20pQw93";
+
+  it("keeps a task and an organisation that are not well formed out of it, and says that they were not", async () => {
+    const lines: string[] = [];
+    const { gateway } = gatewayWith([{ value: GOOD }], {
+      logger: createLogger("debug", (line) => lines.push(line)),
+    });
+    await failureOf(gateway.call({ organisationId: `org ${MARKER}` }, request()));
+    await failureOf(
+      gateway.call({ organisationId: ORG }, request({ task: `has a space ${MARKER}` })),
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.join("\n")).not.toContain(MARKER);
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      outcome: "invalid_request",
+      task: "diagnose",
+      organisationId: "invalid",
+    });
+    expect(JSON.parse(lines[1] ?? "{}")).toMatchObject({
+      outcome: "invalid_request",
+      task: "invalid",
+      organisationId: ORG,
+    });
+  });
+
+  it("keeps a task and an organisation that are not even text out of it", async () => {
+    const lines: string[] = [];
+    const { gateway } = gatewayWith([{ value: GOOD }], {
+      logger: createLogger("debug", (line) => lines.push(line)),
+    });
+    const hostile = {
+      task: { toString: () => MARKER },
+      organisationId: { toString: () => MARKER },
+    };
+    await failureOf(
+      gateway.call(
+        hostile as unknown as { organisationId: string },
+        request({ task: hostile.task as unknown as string }),
+      ),
+    );
+    expect(lines.join("\n")).not.toContain(MARKER);
+  });
+});
+
+describe("a caller who leaves while the call is being got ready", () => {
+  it("does not even have the policy read for a caller who has already left", async () => {
+    let asked = 0;
+    const provider = createMockProvider({ steps: [{ value: GOOD }] });
+    const gateway = createModelGateway({
+      providers: [provider],
+      policy: {
+        permittedClasses: () => {
+          asked += 1;
+          return Promise.resolve(new Set<DataClass>(["source_code"]));
+        },
+      },
+    });
+    const gone = new AbortController();
+    gone.abort();
+    const error = await failureOf(
+      gateway.call(
+        { organisationId: ORG, signal: gone.signal },
+        request({ data: [file("a", "x")] }),
+      ),
+    );
+    expect(error.code).toBe("aborted");
+    expect(asked).toBe(0);
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("is not kept waiting for a policy that does not answer, and nothing is sent", async () => {
+    const provider = createMockProvider({ steps: [{ value: GOOD }] });
+    const gateway = createModelGateway({
+      providers: [provider],
+      policy: { permittedClasses: () => new Promise(() => undefined) },
+    });
+    const controller = new AbortController();
+    const pending = failureOf(
+      gateway.call(
+        { organisationId: ORG, signal: controller.signal },
+        request({ data: [file("a", "x")] }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    expect((await pending).code).toBe("aborted");
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("sends nothing when the policy answers after the caller has left", async () => {
+    const provider = createMockProvider({ steps: [{ value: GOOD }] });
+    const gateway = createModelGateway({
+      providers: [provider],
+      policy: {
+        permittedClasses: () =>
+          new Promise((resolve) =>
+            setTimeout(() => {
+              resolve(new Set<DataClass>(["source_code"]));
+            }, 50),
+          ),
+      },
+    });
+    const controller = new AbortController();
+    const pending = failureOf(
+      gateway.call(
+        { organisationId: ORG, signal: controller.signal },
+        request({ data: [file("a", "x")] }),
+      ),
+    );
+    setTimeout(() => {
+      controller.abort();
+    }, 10);
+    expect((await pending).code).toBe("aborted");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("says aborted and not that the policy failed, when the policy fails after the caller has left", async () => {
+    const gateway = createModelGateway({
+      providers: [createMockProvider()],
+      policy: {
+        permittedClasses: () =>
+          new Promise((_resolve, reject) =>
+            setTimeout(() => {
+              reject(new Error("db down"));
+            }, 40),
+          ),
+      },
+    });
+    const controller = new AbortController();
+    const pending = failureOf(
+      gateway.call(
+        { organisationId: ORG, signal: controller.signal },
+        request({ data: [file("a", "x")] }),
+      ),
+    );
+    setTimeout(() => {
+      controller.abort();
+    }, 10);
+    expect((await pending).code).toBe("aborted");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+
+  it("sends nothing when the caller leaves in the steps between the policy and the call", async () => {
+    const provider = createMockProvider({ steps: [{ value: GOOD }] });
+    const controller = new AbortController();
+    const gateway = createModelGateway({
+      providers: [provider],
+      policy: permitClasses(everything),
+      // Called while the prompt is being made, which is after the policy and before the provider is called.
+      random: (bytes) => {
+        controller.abort();
+        return randomBytes(bytes);
+      },
+    });
+    const error = await failureOf(
+      gateway.call(
+        { organisationId: ORG, signal: controller.signal },
+        request({ data: [file("a", "x")] }),
+      ),
+    );
+    expect(error.code).toBe("aborted");
+    expect(provider.calls).toHaveLength(0);
+  });
+});
+
+describe("a prompt in a language that takes more tokens to a character", () => {
+  it("is not given to a provider whose window it would not fit, and goes to one whose window it does", async () => {
+    const small = createMockProvider({
+      name: "small",
+      capabilities: { maxContextTokens: 2_500 },
+      steps: [{ value: GOOD }],
+    });
+    const large = createMockProvider({ name: "large", steps: [{ value: GOOD }] });
+    const data = [file("a", "日".repeat(1_500))];
+    const both = createModelGateway({
+      providers: [small, large],
+      policy: permitClasses(everything),
+    });
+    expect((await both.call({ organisationId: ORG }, request({ data }))).provider).toBe("large");
+    expect(small.calls).toHaveLength(0);
+
+    const only = createModelGateway({ providers: [small], policy: permitClasses(everything) });
+    expect((await failureOf(only.call({ organisationId: ORG }, request({ data })))).code).toBe(
+      "no_capable_provider",
+    );
+    // The same number of ASCII characters is far fewer tokens, and fits.
+    const ascii = [file("a", "x".repeat(1_500))];
+    expect((await only.call({ organisationId: ORG }, request({ data: ascii }))).provider).toBe(
+      "small",
+    );
   });
 });

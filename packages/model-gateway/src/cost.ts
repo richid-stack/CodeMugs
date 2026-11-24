@@ -34,11 +34,17 @@ export function costMicros(
 }
 
 /**
- * A guess of the tokens in some text, for deciding whether a request fits a provider before it is
- * sent: three characters to a token, which is more than most text needs, so that the guess errs
- * towards "too big" and not towards a call that the provider refuses. The provider's own count is
- * what is accounted.
+ * A guess of the tokens in a text, for deciding whether a request fits a provider before it is
+ * sent. It errs towards "too big", so that a request is not sent to a provider whose window it will
+ * not fit: three ASCII characters to a token, which is more than English and code need, and two
+ * tokens for every other UTF-16 code unit, because Chinese, Japanese and Korean text, and anything
+ * outside ASCII, can take a token or more for each character. The provider's own count is what is
+ * accounted.
  */
-export function estimateTokens(characters: number): number {
-  return Math.ceil(characters / 3);
+export function estimateTokens(text: string): number {
+  let ascii = 0;
+  for (let at = 0; at < text.length; at += 1) {
+    if (text.charCodeAt(at) < 128) ascii += 1;
+  }
+  return Math.ceil(ascii / 3) + (text.length - ascii) * 2;
 }
