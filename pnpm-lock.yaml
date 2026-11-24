@@ -268,6 +268,15 @@ importers:
 
   packages/logging: {}
 
+  packages/model-gateway:
+    dependencies:
+      '@codemugs/logging':
+        specifier: workspace:*
+        version: link:../logging
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   packages/storage:
     dependencies:
       pg:
