@@ -2,6 +2,7 @@ import { createLogger } from "@codemugs/logging";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ModelError, type ModelErrorCode, ProviderFailure } from "./errors.js";
+import { unlimitedBudget } from "./budget.js";
 import { createModelGateway, GATEWAY_LIMITS, type GatewayOptions } from "./gateway.js";
 import { createMockProvider, type MockProvider, type MockStep } from "./mock-provider.js";
 import { permitClasses } from "./policy.js";
@@ -40,7 +41,12 @@ function provider(
 }
 
 function gateway(providers: readonly ModelProvider[], options: Partial<GatewayOptions> = {}) {
-  return createModelGateway({ providers, policy: permitClasses(ALL), ...options });
+  return createModelGateway({
+    budget: unlimitedBudget(),
+    providers,
+    policy: permitClasses(ALL),
+    ...options,
+  });
 }
 
 async function failureOf(work: Promise<unknown>): Promise<ModelError> {
@@ -436,18 +442,28 @@ describe("setting up failover", () => {
   it("refuses limits that are out of range", () => {
     const policy = permitClasses(ALL);
     for (const maxAttempts of [0, -1, 1.5, GATEWAY_LIMITS.maxAttempts + 1]) {
-      expect(() => createModelGateway({ providers: [one()], policy, maxAttempts })).toThrow(
-        RangeError,
-      );
+      expect(() =>
+        createModelGateway({ budget: unlimitedBudget(), providers: [one()], policy, maxAttempts }),
+      ).toThrow(RangeError);
     }
     for (const failureThreshold of [0, 1.5, GATEWAY_LIMITS.maxFailureThreshold + 1]) {
       expect(() =>
-        createModelGateway({ providers: [one()], policy, breaker: { failureThreshold } }),
+        createModelGateway({
+          budget: unlimitedBudget(),
+          providers: [one()],
+          policy,
+          breaker: { failureThreshold },
+        }),
       ).toThrow(RangeError);
     }
     for (const cooldownMs of [0, 1.5, GATEWAY_LIMITS.maxCooldownMs + 1]) {
       expect(() =>
-        createModelGateway({ providers: [one()], policy, breaker: { cooldownMs } }),
+        createModelGateway({
+          budget: unlimitedBudget(),
+          providers: [one()],
+          policy,
+          breaker: { cooldownMs },
+        }),
       ).toThrow(RangeError);
     }
   });
@@ -456,6 +472,7 @@ describe("setting up failover", () => {
     const policy = permitClasses(ALL);
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [one()],
         policy,
         maxAttempts: GATEWAY_LIMITS.maxAttempts,
@@ -464,6 +481,7 @@ describe("setting up failover", () => {
     ).not.toThrow();
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [one()],
         policy,
         maxAttempts: 1,

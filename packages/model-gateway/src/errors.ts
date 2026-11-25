@@ -22,7 +22,11 @@ export type ModelErrorCode =
   /** The answer is not JSON of the shape that was asked for. */
   | "output_invalid"
   /** The caller gave up. */
-  | "aborted";
+  | "aborted"
+  /** The organisation's budget for the month, or the task's, has no room for the call. Sending it again will not help until the budget changes. */
+  | "budget_exceeded"
+  /** The budget could not be read, so nothing is sent (it fails closed). */
+  | "budget_unavailable";
 
 const MESSAGES: Readonly<Record<ModelErrorCode, string>> = {
   invalid_request: "the request is not valid",
@@ -37,11 +41,14 @@ const MESSAGES: Readonly<Record<ModelErrorCode, string>> = {
   refused: "the model declined to answer",
   output_invalid: "the model's answer is not of the shape that was asked for",
   aborted: "the call was given up",
+  budget_exceeded: "the budget for model calls has no room for this call",
+  budget_unavailable: "the budget for model calls could not be read",
 };
 
 /** The failures that are about the provider and not the request, so that another try or another provider may do better. */
 const RETRYABLE: ReadonlySet<ModelErrorCode> = new Set([
   "policy_unavailable",
+  "budget_unavailable",
   "provider_unavailable",
   "rate_limited",
   "timeout",
@@ -72,9 +79,14 @@ export class ModelError extends Error {
     this.attempts = attempts;
   }
 
-  /** What the attempts that were answered cost, in millionths of a US dollar. */
+  /** What the attempts that were answered cost, as the providers said, in millionths of a US dollar. */
   get costMicros(): number {
     return totalCost(this.attempts);
+  }
+
+  /** What was taken from the budget for the attempts: the cost where it is known, and the worst case where a provider may have billed and did not say. */
+  get chargedMicros(): number {
+    return totalCharged(this.attempts);
   }
 }
 
@@ -93,10 +105,21 @@ export interface ModelAttempt {
   readonly outcome: "ok" | ModelErrorCode;
   /** Present when the provider answered and said what it used. */
   readonly usage?: ModelUsage;
+  /**
+   * What was taken from the budget for the attempt, in millionths of a US dollar: the cost where the
+   * provider said what it used; the **worst case** where it may have billed and did not say (it was
+   * too slow, the caller left, it gave no usable usage, it failed in a way of its own); and 0 where it
+   * cannot have (it could not be reached, it limited the requests, it rejected the request).
+   */
+  readonly chargedMicros: number;
 }
 
 export function totalCost(attempts: readonly ModelAttempt[]): number {
   return attempts.reduce((sum, attempt) => sum + (attempt.usage?.costMicros ?? 0), 0);
+}
+
+export function totalCharged(attempts: readonly ModelAttempt[]): number {
+  return attempts.reduce((sum, attempt) => sum + attempt.chargedMicros, 0);
 }
 
 export type ProviderFailureKind = "unavailable" | "rate_limited" | "timeout" | "rejected";
