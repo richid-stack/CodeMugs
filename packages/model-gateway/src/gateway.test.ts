@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { costMicros } from "./cost.js";
 import { ModelError, type ModelErrorCode } from "./errors.js";
+import { unlimitedBudget } from "./budget.js";
 import { createModelGateway, GATEWAY_LIMITS, type GatewayOptions } from "./gateway.js";
 import { createMockProvider, type MockStep } from "./mock-provider.js";
 import { denyAll, permitClasses } from "./policy.js";
@@ -43,6 +44,7 @@ const file = (label: string, content: string, dataClass: DataClass = "source_cod
 function gatewayWith(steps: readonly MockStep[], options: Partial<GatewayOptions> = {}) {
   const provider = createMockProvider({ steps });
   const gateway = createModelGateway({
+    budget: unlimitedBudget(),
     providers: [provider],
     policy: permitClasses(everything),
     ...options,
@@ -116,7 +118,11 @@ describe("asking a model", () => {
 describe("what may be sent", () => {
   it("sends nothing of a class that the policy does not name, and does not call the provider", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
-    const gateway = createModelGateway({ providers: [provider], policy: denyAll });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [provider],
+      policy: denyAll,
+    });
     const error = await failureOf(
       gateway.call({ organisationId: ORG }, request({ data: [file("a", "x", "source_code")] })),
     );
@@ -128,6 +134,7 @@ describe("what may be sent", () => {
   it("refuses when one class of several is not permitted, and sends when all are", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: permitClasses(["repository_facts"]),
     });
@@ -146,6 +153,7 @@ describe("what may be sent", () => {
   it("asks the policy about the organisation of the call, and nothing in the request can change which", async () => {
     const asked: string[] = [];
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [createMockProvider({ steps: [{ value: GOOD }] })],
       policy: {
         permittedClasses: (organisationId) => {
@@ -160,7 +168,11 @@ describe("what may be sent", () => {
 
   it("allows a request with no data under a policy that allows nothing", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
-    const gateway = createModelGateway({ providers: [provider], policy: denyAll });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [provider],
+      policy: denyAll,
+    });
     await gateway.call({ organisationId: ORG }, request());
     expect(provider.calls).toHaveLength(1);
   });
@@ -168,6 +180,7 @@ describe("what may be sent", () => {
   it("fails closed when the policy cannot be read: nothing is sent, and nothing of the failure is in the error", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: {
         permittedClasses: () => Promise.reject(new Error("connection to db.internal refused")),
@@ -280,6 +293,7 @@ describe("choosing a provider", () => {
     });
     const large = createMockProvider({ name: "large", steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [small, large],
       policy: permitClasses(everything),
     });
@@ -299,6 +313,7 @@ describe("choosing a provider", () => {
     });
     const other = createMockProvider({ name: "other", steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [terse, other],
       policy: permitClasses(everything),
     });
@@ -312,7 +327,11 @@ describe("choosing a provider", () => {
 
   it("fails, with a code, when none has room", async () => {
     const small = createMockProvider({ capabilities: { maxContextTokens: 200 } });
-    const gateway = createModelGateway({ providers: [small], policy: permitClasses(everything) });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [small],
+      policy: permitClasses(everything),
+    });
     const error = await failureOf(
       gateway.call({ organisationId: ORG }, request({ data: [file("a", "x".repeat(3_000))] })),
     );
@@ -362,6 +381,7 @@ describe("when the provider fails", () => {
       complete: () => new Promise(() => undefined),
     };
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [deaf],
       policy: permitClasses(everything),
       timeoutMs: 30,
@@ -408,6 +428,7 @@ describe("when the provider fails", () => {
         ),
     };
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [late],
       policy: permitClasses(everything),
       timeoutMs: 10,
@@ -488,7 +509,11 @@ describe("what is kept of a call", () => {
 
   it("holds nothing of the data, the answer or the provider in an error", async () => {
     const hostile = createMockProvider({ steps: [{ text: `${MARKER} is not JSON` }] });
-    const gateway = createModelGateway({ providers: [hostile], policy: permitClasses(everything) });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [hostile],
+      policy: permitClasses(everything),
+    });
     const error = await failureOf(
       gateway.call({ organisationId: ORG }, request({ data: [file("a", MARKER)] })),
     );
@@ -497,6 +522,7 @@ describe("what is kept of a call", () => {
     expect(String(error.stack)).not.toContain(MARKER);
 
     const wrong = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [
         createMockProvider({ steps: [{ value: { summary: MARKER, confidence: MARKER } }] }),
       ],
@@ -564,6 +590,7 @@ describe("what is kept of a call", () => {
 
     const refused: string[] = [];
     const denied = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [createMockProvider()],
       policy: denyAll,
       logger: createLogger("debug", (line) => refused.push(line)),
@@ -580,42 +607,60 @@ describe("setting the gateway up", () => {
   const policy = permitClasses(everything);
 
   it("refuses no providers", () => {
-    expect(() => createModelGateway({ providers: [], policy })).toThrow(RangeError);
+    expect(() => createModelGateway({ budget: unlimitedBudget(), providers: [], policy })).toThrow(
+      RangeError,
+    );
   });
 
   it("refuses a provider name used twice, one that is not a name, and a model that is empty", () => {
     expect(() =>
-      createModelGateway({ providers: [createMockProvider(), createMockProvider()], policy }),
+      createModelGateway({
+        budget: unlimitedBudget(),
+        providers: [createMockProvider(), createMockProvider()],
+        policy,
+      }),
     ).toThrow(RangeError);
     expect(() =>
-      createModelGateway({ providers: [createMockProvider({ name: "Bad Name" })], policy }),
+      createModelGateway({
+        budget: unlimitedBudget(),
+        providers: [createMockProvider({ name: "Bad Name" })],
+        policy,
+      }),
     ).toThrow(RangeError);
     expect(() =>
-      createModelGateway({ providers: [createMockProvider({ model: "" })], policy }),
+      createModelGateway({
+        budget: unlimitedBudget(),
+        providers: [createMockProvider({ model: "" })],
+        policy,
+      }),
     ).toThrow(RangeError);
   });
 
   it("refuses a price that is not whole numbers, and capabilities that are not positive whole numbers", () => {
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [createMockProvider({ price: { inputMicrosPerMillionTokens: 0.5 } })],
         policy,
       }),
     ).toThrow(RangeError);
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [createMockProvider({ price: { outputMicrosPerMillionTokens: -1 } })],
         policy,
       }),
     ).toThrow(RangeError);
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [createMockProvider({ capabilities: { maxContextTokens: 0 } })],
         policy,
       }),
     ).toThrow(RangeError);
     expect(() =>
       createModelGateway({
+        budget: unlimitedBudget(),
         providers: [createMockProvider({ capabilities: { maxOutputTokens: 1.5 } })],
         policy,
       }),
@@ -625,7 +670,12 @@ describe("setting the gateway up", () => {
   it("refuses a timeout that is out of range", () => {
     for (const timeoutMs of [0, -5, 1.5, GATEWAY_LIMITS.maxTimeoutMs + 1, Number.NaN]) {
       expect(() =>
-        createModelGateway({ providers: [createMockProvider()], policy, timeoutMs }),
+        createModelGateway({
+          budget: unlimitedBudget(),
+          providers: [createMockProvider()],
+          policy,
+          timeoutMs,
+        }),
       ).toThrow(RangeError);
     }
   });
@@ -666,9 +716,16 @@ describe("a call that was billed and gave nothing to use", () => {
       const usage =
         step === steps[4]?.[1] ? { ...used, outputTokens: 501, costMicros: 1_000 + 2_505 } : used;
       expect(error.attempts).toEqual([
-        { provider: "mock", model: "mock-model", outcome: code, usage },
+        {
+          provider: "mock",
+          model: "mock-model",
+          outcome: code,
+          usage,
+          chargedMicros: usage.costMicros,
+        },
       ]);
       expect(error.costMicros).toBe(usage.costMicros);
+      expect(error.chargedMicros).toBe(usage.costMicros);
       expect(JSON.stringify(error.attempts)).not.toContain(MARKER);
     },
   );
@@ -695,7 +752,11 @@ describe("a call that was billed and gave nothing to use", () => {
         gatewayWith([{ value: GOOD }]).gateway.call({ organisationId: "x" }, request()),
       ),
     );
-    const denied = createModelGateway({ providers: [createMockProvider()], policy: denyAll });
+    const denied = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [createMockProvider()],
+      policy: denyAll,
+    });
     failures.push(
       await failureOf(denied.call({ organisationId: ORG }, request({ data: [file("a", "x")] }))),
     );
@@ -785,6 +846,7 @@ describe("a caller who leaves while the call is being got ready", () => {
     let asked = 0;
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: {
         permittedClasses: () => {
@@ -809,6 +871,7 @@ describe("a caller who leaves while the call is being got ready", () => {
   it("is not kept waiting for a policy that does not answer, and nothing is sent", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: { permittedClasses: () => new Promise(() => undefined) },
     });
@@ -828,6 +891,7 @@ describe("a caller who leaves while the call is being got ready", () => {
   it("sends nothing when the policy answers after the caller has left", async () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: {
         permittedClasses: () =>
@@ -855,6 +919,7 @@ describe("a caller who leaves while the call is being got ready", () => {
 
   it("says aborted and not that the policy failed, when the policy fails after the caller has left", async () => {
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [createMockProvider()],
       policy: {
         permittedClasses: () =>
@@ -883,6 +948,7 @@ describe("a caller who leaves while the call is being got ready", () => {
     const provider = createMockProvider({ steps: [{ value: GOOD }] });
     const controller = new AbortController();
     const gateway = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [provider],
       policy: permitClasses(everything),
       // Called while the prompt is being made, which is after the policy and before the provider is called.
@@ -912,13 +978,18 @@ describe("a prompt in a language that takes more tokens to a character", () => {
     const large = createMockProvider({ name: "large", steps: [{ value: GOOD }] });
     const data = [file("a", "日".repeat(1_500))];
     const both = createModelGateway({
+      budget: unlimitedBudget(),
       providers: [small, large],
       policy: permitClasses(everything),
     });
     expect((await both.call({ organisationId: ORG }, request({ data }))).provider).toBe("large");
     expect(small.calls).toHaveLength(0);
 
-    const only = createModelGateway({ providers: [small], policy: permitClasses(everything) });
+    const only = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [small],
+      policy: permitClasses(everything),
+    });
     expect((await failureOf(only.call({ organisationId: ORG }, request({ data })))).code).toBe(
       "no_capable_provider",
     );

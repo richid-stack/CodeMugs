@@ -1,10 +1,12 @@
 import { z } from "zod";
 import type { Logger } from "@codemugs/logging";
 import { CircuitBreaker, type BreakerState } from "./breaker.js";
+import type { BudgetClaim, BudgetGrant, BudgetLedger, BudgetReservation } from "./budget.js";
 import { costMicros, estimateTokens, isValidPrice } from "./cost.js";
 import {
   ModelError,
   ProviderFailure,
+  totalCharged,
   totalCost,
   type ModelAttempt,
   type ModelErrorCode,
@@ -44,6 +46,7 @@ export const GATEWAY_LIMITS = {
 
 const NAME = /^[a-z][a-z0-9._-]{0,63}$/;
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ORGANISATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLASSES: ReadonlySet<string> = new Set(DATA_CLASSES);
 
@@ -51,6 +54,11 @@ export interface GatewayOptions {
   /** In the order to try them: the first that has room is asked first, and the next only when it fails in a way that is its own. */
   readonly providers: readonly ModelProvider[];
   readonly policy: ModelPolicy;
+  /**
+   * What may be spent. There is no default, because one that spends without limit is not one to fall back
+   * on: a deployment gives a ledger with limits, and a test gives `unlimitedBudget()`.
+   */
+  readonly budget: BudgetLedger;
   readonly logger?: Logger;
   /** How long each attempt at a provider may take before it is given up, in milliseconds. */
   readonly timeoutMs?: number;
@@ -141,6 +149,8 @@ function checkRequest<T>(context: CallContext, request: ModelRequest<T>): void {
     request.instructions.length + request.data.reduce((sum, part) => sum + part.content.length, 0);
   const valid =
     ORGANISATION.test(context.organisationId) &&
+    (context.taskId === undefined ||
+      (typeof context.taskId === "string" && TASK_ID.test(context.taskId))) &&
     NAME.test(request.task) &&
     request.instructions.length > 0 &&
     request.instructions.length <= GATEWAY_LIMITS.maxInstructionCharacters &&
@@ -195,13 +205,21 @@ function answerFault(
 function loggable<T>(
   context: CallContext,
   request: ModelRequest<T>,
-): { task: string; organisationId: string } {
+): { task: string; organisationId: string; taskId?: string } {
   return {
     task: typeof request.task === "string" && NAME.test(request.task) ? request.task : "invalid",
     organisationId:
       typeof context.organisationId === "string" && ORGANISATION.test(context.organisationId)
         ? context.organisationId
         : "invalid",
+    ...(context.taskId === undefined
+      ? {}
+      : {
+          taskId:
+            typeof context.taskId === "string" && TASK_ID.test(context.taskId)
+              ? context.taskId
+              : "invalid",
+        }),
   };
 }
 
@@ -253,14 +271,22 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
     request: ModelRequest<T>,
     prepared: Prepared,
     context: CallContext,
+    worstMicros: number,
   ): Promise<AttemptOutcome<T>> {
-    const failed = (code: ModelErrorCode, usage?: ModelUsage): AttemptOutcome<T> => ({
+    // What is taken from the budget (see `ModelAttempt.chargedMicros`): the cost if the provider said, the
+    // worst case if it may have billed and did not say, and nothing if it cannot have.
+    const failed = (
+      code: ModelErrorCode,
+      chargedMicros: number,
+      usage?: ModelUsage,
+    ): AttemptOutcome<T> => ({
       ok: false,
       error: new ModelError(code),
       attempt: {
         provider: provider.name,
         model: provider.model,
         outcome: code,
+        chargedMicros,
         ...(usage === undefined ? {} : { usage }),
       },
     });
@@ -280,19 +306,24 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
     try {
       response = await abortable(provider.complete(providerRequest), signal);
     } catch (error) {
-      if (context.signal?.aborted) return failed("aborted");
-      if (timeout.aborted) return failed("timeout");
-      return failed(error instanceof ProviderFailure ? error.code : "provider_unavailable");
+      if (context.signal?.aborted) return failed("aborted", worstMicros);
+      if (timeout.aborted) return failed("timeout", worstMicros);
+      if (error instanceof ProviderFailure) {
+        // A provider that says it could not be reached, limited the requests or rejected the request did
+        // not bill; one that says that it was too slow may have.
+        return failed(error.code, error.kind === "timeout" ? worstMicros : 0);
+      }
+      return failed("provider_unavailable", worstMicros);
     }
 
     // What the call used is worked out first, because it is billed whether or not the answer can be
     // used, and a failure from here on carries it.
-    if (!hasUsage(response)) return failed("provider_unavailable");
+    if (!hasUsage(response)) return failed("provider_unavailable", worstMicros);
     let cost: number;
     try {
       cost = costMicros(response.inputTokens, response.outputTokens, provider.price);
     } catch {
-      return failed("provider_unavailable");
+      return failed("provider_unavailable", worstMicros);
     }
     const used: ModelUsage = {
       inputTokens: response.inputTokens,
@@ -302,16 +333,50 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
 
     // The answer is checked, and is data until it has been.
     const fault = answerFault(response, request.maxOutputTokens);
-    if (fault !== undefined) return failed(fault, used);
+    if (fault !== undefined) return failed(fault, cost, used);
     const json = parseJson(response.text);
-    if (!json.ok) return failed("output_invalid", used);
-    const parsed = request.output.safeParse(json.value);
-    if (!parsed.success) return failed("output_invalid", used);
+    if (!json.ok) return failed("output_invalid", cost, used);
+    // A schema that throws on an answer (a refinement can) is an answer that does not fit, and it was billed.
+    let parsed: z.ZodSafeParseResult<T>;
+    try {
+      parsed = request.output.safeParse(json.value);
+    } catch {
+      return failed("output_invalid", cost, used);
+    }
+    if (!parsed.success) return failed("output_invalid", cost, used);
     return {
       ok: true,
       value: parsed.data,
-      attempt: { provider: provider.name, model: provider.model, outcome: "ok", usage: used },
+      attempt: {
+        provider: provider.name,
+        model: provider.model,
+        outcome: "ok",
+        usage: used,
+        chargedMicros: cost,
+      },
     };
+  }
+
+  /**
+   * Tells the ledger what an attempt was charged. Money has been spent by now, so a ledger that fails
+   * here does not fail the call: the reservation stays, which counts it as spent at its worst case, and
+   * the log says so (a code and an amount, nothing of the request).
+   */
+  async function settle<T>(
+    reservation: BudgetReservation,
+    chargedMicros: number,
+    context: CallContext,
+    request: ModelRequest<T>,
+  ): Promise<void> {
+    try {
+      if (chargedMicros === 0) await reservation.release();
+      else await reservation.settle(chargedMicros);
+    } catch {
+      options.logger?.warn("model budget settle failed", {
+        ...loggable(context, request),
+        chargedMicros,
+      });
+    }
   }
 
   return {
@@ -325,10 +390,18 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
     async call<T>(context: CallContext, request: ModelRequest<T>): Promise<ModelResult<T>> {
       const started = now();
       const attempts: ModelAttempt[] = [];
-      const totals = (): { inputTokens: number; outputTokens: number; costMicros: number } => ({
+      // What stopped the call for want of room, for the log: the organisation's budget or the task's.
+      let refusedBy: "organisation" | "task" | undefined;
+      const totals = (): {
+        inputTokens: number;
+        outputTokens: number;
+        costMicros: number;
+        chargedMicros: number;
+      } => ({
         inputTokens: attempts.reduce((sum, one) => sum + (one.usage?.inputTokens ?? 0), 0),
         outputTokens: attempts.reduce((sum, one) => sum + (one.usage?.outputTokens ?? 0), 0),
         costMicros: totalCost(attempts),
+        chargedMicros: totalCharged(attempts),
       });
       try {
         checkRequest(context, request);
@@ -370,11 +443,11 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
         const prepared: Prepared = { prompt, jsonSchema, redactions };
 
         // 4. The providers that have room for it, in the order given.
-        const needed =
+        const inputEstimate =
           estimateTokens(prompt.system) +
           estimateTokens(prompt.user) +
-          estimateTokens(JSON.stringify(jsonSchema)) +
-          request.maxOutputTokens;
+          estimateTokens(JSON.stringify(jsonSchema));
+        const needed = inputEstimate + request.maxOutputTokens;
         const candidates = entries.filter(
           ({ provider: { capabilities } }) =>
             needed <= capabilities.maxContextTokens &&
@@ -392,8 +465,57 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
           if (context.signal?.aborted) throw new ModelError("aborted", [...attempts]);
           if (!breaker.tryAcquire()) continue;
 
-          const outcome = await attempt(provider, request, prepared, context);
+          // 6. Room in the budget for the worst that this attempt can cost: the input as guessed (which
+          // errs towards too big) and all the output that is allowed. Nothing is sent without it. A ledger
+          // that cannot be read sends nothing either, and a reservation that is granted after the caller
+          // has left is given back.
+          let worst: number;
+          try {
+            worst = costMicros(inputEstimate, request.maxOutputTokens, provider.price);
+          } catch {
+            breaker.release();
+            throw new ModelError("budget_exceeded", [...attempts]);
+          }
+          const claim: BudgetClaim = {
+            organisationId: context.organisationId,
+            ...(context.taskId === undefined ? {} : { taskId: context.taskId }),
+            micros: worst,
+          };
+          let pending: Promise<BudgetGrant> | undefined;
+          let grant: BudgetGrant;
+          try {
+            pending = options.budget.reserve(claim);
+            grant =
+              context.signal === undefined
+                ? await pending
+                : await abortable(pending, context.signal);
+          } catch {
+            breaker.release();
+            if (pending !== undefined) {
+              void pending
+                .then((late) => (late.ok ? late.reservation.release() : undefined))
+                .catch(() => undefined);
+            }
+            throw new ModelError(context.signal?.aborted ? "aborted" : "budget_unavailable", [
+              ...attempts,
+            ]);
+          }
+          if (!grant.ok) {
+            breaker.release();
+            refusedBy = grant.limit;
+            throw new ModelError("budget_exceeded", [...attempts]);
+          }
+          // The caller may have left in the moment between the grant and here. The attempt looks at the
+          // signal only after it has called the provider, so this is the last place where nothing is sent.
+          if (context.signal?.aborted) {
+            breaker.release();
+            await settle(grant.reservation, 0, context, request);
+            throw new ModelError("aborted", [...attempts]);
+          }
+
+          const outcome = await attempt(provider, request, prepared, context, worst);
           attempts.push(outcome.attempt);
+          await settle(grant.reservation, outcome.attempt.chargedMicros, context, request);
           const code = outcome.ok ? "ok" : outcome.error.code;
           if (code === "aborted") breaker.release();
           else if (PROVIDER_FAULTS.has(code as ModelErrorCode)) breaker.failure();
@@ -418,6 +540,7 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
               inputTokens: outcome.attempt.usage?.inputTokens ?? 0,
               outputTokens: outcome.attempt.usage?.outputTokens ?? 0,
               costMicros: spent.costMicros,
+              chargedMicros: spent.chargedMicros,
               attempts: [...attempts],
               redactions,
             };
@@ -448,7 +571,9 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
             ? {}
             : { provider: lastAttempt.provider, model: lastAttempt.model }),
           outcome: failure.code,
+          ...(refusedBy === undefined ? {} : { limit: refusedBy }),
           attempts: failure.attempts.length,
+          ...(failure.attempts.length === 0 ? {} : { chargedMicros: failure.chargedMicros }),
           ...(failure.attempts.some((one) => one.usage !== undefined)
             ? {
                 inputTokens: failure.attempts.reduce(

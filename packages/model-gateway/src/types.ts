@@ -39,6 +39,11 @@ export interface ModelRequest<T> {
 /** Who the call is for and whether the caller is still waiting. The organisation comes from the caller's authority, never from a request body (invariant 1). */
 export interface CallContext {
   readonly organisationId: string;
+  /**
+   * The task that the call is part of, as an opaque id: `[A-Za-z0-9_-]`, 1 to 64 characters. A task has
+   * a budget of its own, which is not looked at for a call that has none.
+   */
+  readonly taskId?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -52,6 +57,8 @@ export interface ModelResult<T> {
   readonly outputTokens: number;
   /** The cost of the whole call in millionths of a US dollar, from the providers' prices: the answer's, and that of any attempt that was billed before it and failed. */
   readonly costMicros: number;
+  /** What was taken from the budget for the call: the cost, and the worst case for any attempt that may have been billed and did not say. At least `costMicros`. */
+  readonly chargedMicros: number;
   /** Every attempt at a provider that was made, in order, ending with the one that answered. */
   readonly attempts: readonly ModelAttempt[];
   /** How many secret-like strings were removed from the data before it was sent. */

@@ -1,5 +1,15 @@
 export { costMicros, estimateTokens } from "./cost.js";
 export { CircuitBreaker } from "./breaker.js";
+export { createMemoryBudget, unlimitedBudget } from "./budget.js";
+export type {
+  BudgetClaim,
+  BudgetGrant,
+  BudgetLedger,
+  BudgetLimits,
+  BudgetReservation,
+  MemoryBudget,
+  MemoryBudgetOptions,
+} from "./budget.js";
 export type { BreakerState, BreakerStatus } from "./breaker.js";
 export { ModelError, ProviderFailure } from "./errors.js";
 export type { ModelAttempt, ModelErrorCode, ModelUsage, ProviderFailureKind } from "./errors.js";

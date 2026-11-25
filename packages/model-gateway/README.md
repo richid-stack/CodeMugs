@@ -2,21 +2,27 @@
 
 Provider-independent access to language models: one interface in front of any provider, with what may be sent decided by the organisation's policy, instructions kept apart from untrusted data, secret-like strings removed, the answer checked against a schema, and what a call cost worked out. The product is never hard-wired to one provider.
 
-**Status:** Phase 1 · Foundation, step 8, first and second parts ([ADR 0039](../../docs/architecture/decisions/0039-the-model-gateway.md), [ADR 0040](../../docs/architecture/decisions/0040-failover-and-a-circuit-breaker.md)). The core, failover across providers, a circuit breaker for each, and a mock provider exist and are tested with failures injected through the mock. **There is no adapter for a real provider yet**, nothing calls the gateway, and there is no budget or stored usage (part three). Release gate 16 is **in progress, not closed** (nothing has met a real provider's failures); gate 17 is **not started**: nothing here stops spending.
+**Status:** Phase 1 · Foundation, step 8, first three parts ([ADR 0039](../../docs/architecture/decisions/0039-the-model-gateway.md), [ADR 0040](../../docs/architecture/decisions/0040-failover-and-a-circuit-breaker.md), [ADR 0041](../../docs/architecture/decisions/0041-budgets-in-the-model-gateway.md)). The core, failover across providers, a circuit breaker for each, budgets, and a mock provider exist and are tested, with failures injected through the mock. **There is no adapter for a real provider yet**, nothing calls the gateway, the only budget ledger is **in memory** (it does not survive a restart or reach another process), and nothing is kept per organisation. Release gates 16 and 17 are **in progress, not closed**: nothing has met a real provider's failures, and nothing here caps spending in a deployment.
 
 ## What it does
 
 ```ts
-import { createModelGateway, createMockProvider, permitClasses } from "@codemugs/model-gateway";
+import {
+  createMockProvider,
+  createModelGateway,
+  permitClasses,
+  unlimitedBudget,
+} from "@codemugs/model-gateway";
 import { z } from "zod";
 
 const gateway = createModelGateway({
   providers: [createMockProvider({ steps: [{ value: { summary: "…", confidence: 0.8 } }] })],
   policy: permitClasses(["repository_facts"]), // what the organisation lets go; the default sends nothing
+  budget: unlimitedBudget(), // what may be spent: required; a deployment gives a ledger with limits
 });
 
 const result = await gateway.call(
-  { organisationId, signal }, // the organisation comes from the caller's authority, never from a request body
+  { organisationId, taskId, signal }, // the organisation comes from the caller's authority, never from a request body; the task is optional
   {
     task: "diagnose",
     instructions: "Say what is wrong.", // written by the platform; nothing from a customer goes here
@@ -26,7 +32,8 @@ const result = await gateway.call(
   },
 );
 // result.value (checked), result.provider, result.inputTokens, result.outputTokens (of the attempt that answered),
-// result.costMicros (of all the attempts), result.attempts, result.redactions
+// result.costMicros (of all the attempts, as the providers said), result.chargedMicros (taken from the budget),
+// result.attempts, result.redactions
 ```
 
 For each call, in this order:
@@ -61,6 +68,23 @@ gateway.providers(); // [{ name, model, state: "closed" | "open" | "half_open", 
 - With no provider in use the call fails at once with `provider_unavailable` and no attempts. The cost of a call is the sum over its attempts (`result.costMicros`, `error.costMicros`).
 - The state is in memory and per process (ADR 0040).
 
+## Budgets
+
+```ts
+const budget = createMemoryBudget({
+  // The limits come from the ledger: not from the caller, and not from the request.
+  limits: (organisationId) => ({ organisationMonthlyMicros: 20_000_000, taskMicros: 2_000_000 }),
+});
+createModelGateway({ providers, policy, budget });
+```
+
+- **Before each attempt** at a provider the gateway reserves room for the **worst** that the attempt can cost: the input as guessed (which errs towards too big) and all of the output that the request allows, at that provider's price. With no room the call fails with `budget_exceeded` (not retryable) and the provider is not asked. A ledger that cannot be read fails it with `budget_unavailable` (retryable), and nothing is sent.
+- **After** the attempt the reservation is settled with what it was **charged**: the cost where the provider said what it used (even for an answer that could not be used); the **worst case** where it may have billed and did not say (it was too slow, the caller left, its usage was not a count, an adapter failed with an error of its own); and nothing where it cannot have (it could not be reached, it limited the requests, it rejected the request). `attempts[].chargedMicros`, `result.chargedMicros` and `error.chargedMicros` say so; `costMicros` stays what the providers said.
+- An organisation has a limit for each calendar month (UTC) and always has it. A task (`taskId` in the call's context, an opaque id from platform code) has a limit of its own, which a call with no task does not have. An organisation whose limits nobody set is refused.
+- Calls made at once cannot pass a limit together: each reserves before it is sent. A charge can pass what was reserved if the guess of the input was low, and the next call is then refused.
+- A reservation that is never settled stays counted as spent at its worst case. A ledger that fails to settle does not fail a call that was paid for; the log says so, with an amount and nothing that the ledger said.
+- `createMemoryBudget` is **per process, forgets on restart, and keeps an entry for every task**: tests and development only. A deployment with several processes and a ledger like it would allow the limit to each. `unlimitedBudget()` stops nothing.
+
 ## Writing an adapter
 
 A provider is `{ name, model, capabilities, price, complete(request) }`. `complete` gets the system and user text, the JSON schema and the signal, and returns the text, the usage and why it stopped. It throws `ProviderFailure` with one of four kinds (`unavailable`, `rate_limited`, `timeout`, `rejected`) and **never puts the provider's message in it**, which can echo the prompt. Prices are whole millionths of a dollar for a million tokens, and are the adapter's configuration, not constants of this package.
@@ -69,8 +93,8 @@ A provider is `{ name, model, capabilities, price, complete(request) }`. `comple
 
 ## Not shown
 
-A real provider, whether any of this holds under a provider's real failures (the failover tests inject them through a mock), a breaker that is shared between processes, a budget that stops spending, and usage that is kept. The data classes that may leave the platform are a [draft](../../docs/security/data-classification.md) for the owner to confirm. Redaction is not a guarantee. The token count before a call is a guess that errs towards too big (three ASCII characters to a token, two tokens for every other character, for Chinese, Japanese and Korean text); what is accounted is the provider's. A call that is given up on (time or caller) is not accounted, because its usage is not known; the budget part will have to reserve for it.
+A real provider, whether any of this holds under a provider's real failures (the failover tests inject them through a mock), a breaker or a budget that is shared between processes or survives a restart, who sets the limits, and usage that is kept per organisation. The data classes that may leave the platform are a [draft](../../docs/security/data-classification.md) for the owner to confirm. Redaction is not a guarantee. The token count before a call is a guess that errs towards too big (three ASCII characters to a token, two tokens for every other character, for Chinese, Japanese and Korean text); what is accounted is the provider's. A call that is given up on (time or caller) has no usage, so the budget is charged its worst case.
 
 ## Tests
 
-`pnpm --filter @codemugs/model-gateway test`. No database or network. Faults were planted in the gateway one at a time (41 in the core, and 45 more in the breaker and the failover, including a breaker that never opens, one that lets several probes through, failing over on an answer that was no good, ignoring the limit of attempts, and adding up the cost of the last attempt only; and, in the core, including sending a class the policy did not name, failing open, not removing a secret, not giving up on a provider that ignores the signal or on a policy that does not answer, logging a task that is not well formed, losing the usage of an unusable answer, using a truncated or invalid answer, and rounding the cost down) and each is caught by a test.
+`pnpm --filter @codemugs/model-gateway test`. No database or network. Faults were planted in the gateway one at a time (41 in the core, 45 more in the breaker and the failover, and 66 in the budget; among them a breaker that never opens, one that lets several probes through, failing over on an answer that was no good, ignoring the limit of attempts, adding up the cost of the last attempt only, a budget that is not asked or whose refusal is ignored, a worst case that leaves out the output, an attempt that is not settled, a caller who leaves and is charged nothing, a ledger that fails to settle failing the call, and a reservation that is granted late and never given back; and, in the core, including sending a class the policy did not name, failing open, not removing a secret, not giving up on a provider that ignores the signal or on a policy that does not answer, logging a task that is not well formed, losing the usage of an unusable answer, using a truncated or invalid answer, and rounding the cost down) and each is caught by a test.
