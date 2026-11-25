@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ModelAttempt } from "./errors.js";
 
 /**
  * What a piece of data is, in the terms of the data classification
@@ -43,12 +44,16 @@ export interface CallContext {
 
 export interface ModelResult<T> {
   readonly value: T;
+  /** The provider that answered. */
   readonly provider: string;
   readonly model: string;
+  /** The tokens of the answering attempt. */
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** In millionths of a US dollar, from the provider's price. */
+  /** The cost of the whole call in millionths of a US dollar, from the providers' prices: the answer's, and that of any attempt that was billed before it and failed. */
   readonly costMicros: number;
+  /** Every attempt at a provider that was made, in order, ending with the one that answered. */
+  readonly attempts: readonly ModelAttempt[];
   /** How many secret-like strings were removed from the data before it was sent. */
   readonly redactions: number;
 }
