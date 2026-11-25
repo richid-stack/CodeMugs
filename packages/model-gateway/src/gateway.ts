@@ -505,6 +505,13 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
             refusedBy = grant.limit;
             throw new ModelError("budget_exceeded", [...attempts]);
           }
+          // The caller may have left in the moment between the grant and here. The attempt looks at the
+          // signal only after it has called the provider, so this is the last place where nothing is sent.
+          if (context.signal?.aborted) {
+            breaker.release();
+            await settle(grant.reservation, 0, context, request);
+            throw new ModelError("aborted", [...attempts]);
+          }
 
           const outcome = await attempt(provider, request, prepared, context, worst);
           attempts.push(outcome.attempt);

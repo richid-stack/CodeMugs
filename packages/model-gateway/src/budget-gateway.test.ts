@@ -573,6 +573,63 @@ describe("a budget that cannot be read", () => {
     expect(absurd.calls).toHaveLength(2);
   });
 
+  it("sends nothing, gives the reservation back and frees the probe, when the caller leaves in the moment after the grant", async () => {
+    const clock = { now: 1_000_000 };
+    let controller = new AbortController();
+    let leaving = false;
+    let released = 0;
+    const granted: BudgetGrant = {
+      ok: true,
+      reservation: {
+        settle: () => Promise.resolve(),
+        release: () => {
+          released += 1;
+          return Promise.resolve();
+        },
+      },
+    };
+    const ledger: BudgetLedger = {
+      reserve: () => {
+        const answer = Promise.resolve(granted);
+        if (leaving) {
+          // The caller leaves after the wait for the ledger is over and before the call goes on.
+          void answer
+            .then(() => undefined)
+            .then(() => {
+              controller.abort();
+            });
+        }
+        return answer;
+      },
+    };
+    const flaky = provider("a", [{ fail: "unavailable" }, { value: GOOD }]);
+    const g = gateway([flaky], {
+      now: () => clock.now,
+      breaker: { failureThreshold: 1, cooldownMs: 1_000 },
+      budget: ledger,
+    });
+    await failureOf(g.call({ organisationId: ORG }, request()));
+    expect(released).toBe(1);
+    clock.now += 1_000;
+    expect(g.providers()[0]?.state).toBe("half_open");
+
+    leaving = true;
+    const error = await failureOf(
+      g.call({ organisationId: ORG, signal: controller.signal }, request()),
+    );
+    expect(error.code).toBe("aborted");
+    expect(error.attempts).toEqual([]);
+    expect(flaky.calls).toHaveLength(1);
+    expect(released).toBe(2);
+
+    // Nothing was said about the provider, and the probe that the call held is free for the next.
+    expect(g.providers()[0]).toMatchObject({ state: "half_open", consecutiveFailures: 1 });
+    leaving = false;
+    controller = new AbortController();
+    expect((await g.call({ organisationId: ORG }, request())).provider).toBe("a");
+    expect(flaky.calls).toHaveLength(2);
+  });
+
   it("gives a reservation back that is granted after the caller has left", async () => {
     let grant!: (value: BudgetGrant) => void;
     const late = new Promise<BudgetGrant>((resolve) => {
