@@ -1,8 +1,10 @@
 export { costMicros, estimateTokens } from "./cost.js";
+export { CircuitBreaker } from "./breaker.js";
+export type { BreakerState, BreakerStatus } from "./breaker.js";
 export { ModelError, ProviderFailure } from "./errors.js";
-export type { ModelErrorCode, ModelUsage, ProviderFailureKind } from "./errors.js";
+export type { ModelAttempt, ModelErrorCode, ModelUsage, ProviderFailureKind } from "./errors.js";
 export { createModelGateway, GATEWAY_LIMITS } from "./gateway.js";
-export type { GatewayOptions, ModelGateway } from "./gateway.js";
+export type { GatewayOptions, ModelGateway, ProviderStatus } from "./gateway.js";
 export { createMockProvider } from "./mock-provider.js";
 export type { MockProvider, MockProviderOptions, MockStep } from "./mock-provider.js";
 export { denyAll, permitClasses } from "./policy.js";

@@ -543,12 +543,22 @@ describe("what is kept of a call", () => {
       logger: createLogger("debug", (line) => lines.push(line)),
     });
     await failureOf(gateway.call({ organisationId: ORG }, request({ data: [file("a", MARKER)] })));
-    const entry = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    // The attempt that failed, and then the call, which has nobody else to ask.
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      level: "warn",
+      msg: "model attempt failed",
+      outcome: "rate_limited",
+      provider: "mock",
+      attempt: 1,
+    });
+    const entry = JSON.parse(lines[1] ?? "{}") as Record<string, unknown>;
     expect(entry).toMatchObject({
       level: "warn",
       msg: "model call failed",
       outcome: "rate_limited",
       provider: "mock",
+      attempts: 1,
     });
     expect(lines.join("\n")).not.toContain(MARKER);
 
@@ -625,8 +635,6 @@ describe("a call that was billed and gave nothing to use", () => {
   const MARKER = "MARKER-Zq81xLm20pQw93";
   // The mock's price: a dollar a million tokens in, five a million out. 1,000 in and 200 out is 1,000 + 1,000.
   const used = {
-    provider: "mock",
-    model: "mock-model",
     inputTokens: 1_000,
     outputTokens: 200,
     costMicros: 2_000,
@@ -655,10 +663,13 @@ describe("a call that was billed and gave nothing to use", () => {
       const { gateway } = gatewayWith([step]);
       const error = await failureOf(gateway.call({ organisationId: ORG }, request()));
       expect(error.code).toBe(code);
-      const expected =
+      const usage =
         step === steps[4]?.[1] ? { ...used, outputTokens: 501, costMicros: 1_000 + 2_505 } : used;
-      expect(error.usage).toEqual(expected);
-      expect(JSON.stringify(error.usage)).not.toContain(MARKER);
+      expect(error.attempts).toEqual([
+        { provider: "mock", model: "mock-model", outcome: code, usage },
+      ]);
+      expect(error.costMicros).toBe(usage.costMicros);
+      expect(JSON.stringify(error.attempts)).not.toContain(MARKER);
     },
   );
 
@@ -677,7 +688,7 @@ describe("a call that was billed and gave nothing to use", () => {
     });
   });
 
-  it("has no usage when nothing was answered: the request, the policy, the provider, the clock and the caller", async () => {
+  it("has no usage when nothing was answered: the request, the policy, the provider, the clock and the usage", async () => {
     const failures: Array<ModelError> = [];
     failures.push(
       await failureOf(
@@ -709,13 +720,12 @@ describe("a call that was billed and gave nothing to use", () => {
         ),
       ),
     );
-    expect(failures.map((failure) => failure.usage)).toEqual([
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    ]);
+    // Nothing was billed, whether or not a provider was called.
+    expect(failures.map((failure) => failure.costMicros)).toEqual([0, 0, 0, 0, 0]);
+    expect(
+      failures.flatMap((failure) => failure.attempts.filter((one) => one.usage !== undefined)),
+    ).toEqual([]);
+    expect(failures.map((failure) => failure.attempts.length)).toEqual([0, 0, 1, 1, 1]);
   });
 
   it("gives the usage of a call that worked in its result, as it always did", async () => {

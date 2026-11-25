@@ -56,29 +56,47 @@ export class ModelError extends Error {
   readonly code: ModelErrorCode;
   readonly retryable: boolean;
   /**
-   * What the call used, when it reached a provider that answered, whether or not the answer could be
-   * used: a call can be billed for an answer that is refused, cut short or not valid, and the spend must
-   * not disappear with the failure. Numbers and names only. It is absent when nothing was answered (the
-   * request was refused, the provider failed, the call was given up on), where the usage is not known.
+   * Every attempt that was made at a provider, in order, and how each ended, including the tokens and
+   * cost of those that were answered: a call can be billed for an answer that is refused, cut short or
+   * not valid, and the spend must not disappear with the failure. Names, codes and numbers only. Empty
+   * when no provider was called (the request or the policy was refused, or every provider's breaker is
+   * open). An attempt that was given up on has no usage, because it is not known.
    */
-  readonly usage: ModelUsage | undefined;
+  readonly attempts: readonly ModelAttempt[];
 
-  constructor(code: ModelErrorCode, usage?: ModelUsage) {
+  constructor(code: ModelErrorCode, attempts: readonly ModelAttempt[] = []) {
     super(MESSAGES[code]);
     this.name = "ModelError";
     this.code = code;
     this.retryable = RETRYABLE.has(code);
-    this.usage = usage;
+    this.attempts = attempts;
+  }
+
+  /** What the attempts that were answered cost, in millionths of a US dollar. */
+  get costMicros(): number {
+    return totalCost(this.attempts);
   }
 }
 
+/** What a call used, as numbers. */
 export interface ModelUsage {
-  readonly provider: string;
-  readonly model: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
   /** In millionths of a US dollar. */
   readonly costMicros: number;
+}
+
+/** One call to one provider, and how it ended. */
+export interface ModelAttempt {
+  readonly provider: string;
+  readonly model: string;
+  readonly outcome: "ok" | ModelErrorCode;
+  /** Present when the provider answered and said what it used. */
+  readonly usage?: ModelUsage;
+}
+
+export function totalCost(attempts: readonly ModelAttempt[]): number {
+  return attempts.reduce((sum, attempt) => sum + (attempt.usage?.costMicros ?? 0), 0);
 }
 
 export type ProviderFailureKind = "unavailable" | "rate_limited" | "timeout" | "rejected";

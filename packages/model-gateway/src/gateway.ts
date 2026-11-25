@@ -1,7 +1,15 @@
 import { z } from "zod";
 import type { Logger } from "@codemugs/logging";
+import { CircuitBreaker, type BreakerState } from "./breaker.js";
 import { costMicros, estimateTokens, isValidPrice } from "./cost.js";
-import { ModelError, ProviderFailure, type ModelErrorCode, type ModelUsage } from "./errors.js";
+import {
+  ModelError,
+  ProviderFailure,
+  totalCost,
+  type ModelAttempt,
+  type ModelErrorCode,
+  type ModelUsage,
+} from "./errors.js";
 import type { ModelPolicy } from "./policy.js";
 import { redact } from "./redact.js";
 import { renderPrompt } from "./render.js";
@@ -13,7 +21,9 @@ import {
   type ModelRequest,
   type ModelResult,
   type ProviderResponse,
+  type ProviderRequest,
 } from "./types.js";
+import type { RenderedPrompt } from "./render.js";
 
 /** The bounds of a request. They are the gateway's and not the caller's, so a caller cannot ask for more. */
 export const GATEWAY_LIMITS = {
@@ -24,6 +34,12 @@ export const GATEWAY_LIMITS = {
   minTimeoutMs: 1,
   maxTimeoutMs: 600_000,
   defaultTimeoutMs: 120_000,
+  maxAttempts: 10,
+  defaultAttempts: 3,
+  maxFailureThreshold: 100,
+  defaultFailureThreshold: 5,
+  maxCooldownMs: 3_600_000,
+  defaultCooldownMs: 30_000,
 } as const;
 
 const NAME = /^[a-z][a-z0-9._-]{0,63}$/;
@@ -32,23 +48,43 @@ const ORGANISATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const CLASSES: ReadonlySet<string> = new Set(DATA_CLASSES);
 
 export interface GatewayOptions {
+  /** In the order to try them: the first that has room is asked first, and the next only when it fails in a way that is its own. */
   readonly providers: readonly ModelProvider[];
   readonly policy: ModelPolicy;
   readonly logger?: Logger;
-  /** How long a call may take before it is given up, in milliseconds. */
+  /** How long each attempt at a provider may take before it is given up, in milliseconds. */
   readonly timeoutMs?: number;
+  /** How many providers may be tried for one call. Default 3. With the time limit, this bounds how long a call can take. */
+  readonly maxAttempts?: number;
+  /** When a provider is taken out of use after failures, and for how long. */
+  readonly breaker?: {
+    /** Failures in a row that are the provider's before it is not called. Default 5. */
+    readonly failureThreshold?: number;
+    /** How long it is left alone before one call is let through to see whether it is back, in milliseconds. Default 30,000. */
+    readonly cooldownMs?: number;
+  };
   /** Random bytes for the boundary of a prompt's data blocks. Only a test changes this. */
   readonly random?: (bytes: number) => Uint8Array;
   readonly now?: () => number;
 }
 
+export interface ProviderStatus {
+  readonly name: string;
+  readonly model: string;
+  readonly state: BreakerState;
+  readonly consecutiveFailures: number;
+}
+
 export interface ModelGateway {
   /**
    * Asks a model and gives back an answer that has been checked against the schema that was asked for,
-   * with what it cost. It fails with a `ModelError` and nothing else, whose message holds nothing of
-   * the request or the answer.
+   * with what it cost. When a provider fails in a way that is its own (it cannot be reached, it limits
+   * the requests, it is too slow) the next that has room is asked, up to the limit of attempts. It fails
+   * with a `ModelError` and nothing else, whose message holds nothing of the request or the answer.
    */
   call<T>(context: CallContext, request: ModelRequest<T>): Promise<ModelResult<T>>;
+  /** Whether each provider is in use, for a health check. */
+  providers(): readonly ProviderStatus[];
 }
 
 class Aborted extends Error {}
@@ -169,28 +205,138 @@ function loggable<T>(
   };
 }
 
+function inRange(value: number, low: number, high: number): boolean {
+  return Number.isSafeInteger(value) && value >= low && value <= high;
+}
+
+interface Prepared {
+  readonly prompt: RenderedPrompt;
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  readonly redactions: number;
+}
+
+type AttemptOutcome<T> =
+  | { readonly ok: true; readonly value: T; readonly attempt: ModelAttempt }
+  | { readonly ok: false; readonly error: ModelError; readonly attempt: ModelAttempt };
+
+/** Whether an outcome says that the provider is down or slow or limiting, as opposed to anything else. */
+const PROVIDER_FAULTS: ReadonlySet<ModelErrorCode> = new Set([
+  "provider_unavailable",
+  "rate_limited",
+  "timeout",
+]);
+
 export function createModelGateway(options: GatewayOptions): ModelGateway {
   checkProviders(options.providers);
   const timeoutMs = options.timeoutMs ?? GATEWAY_LIMITS.defaultTimeoutMs;
+  const maxAttempts = options.maxAttempts ?? GATEWAY_LIMITS.defaultAttempts;
+  const failureThreshold =
+    options.breaker?.failureThreshold ?? GATEWAY_LIMITS.defaultFailureThreshold;
+  const cooldownMs = options.breaker?.cooldownMs ?? GATEWAY_LIMITS.defaultCooldownMs;
   if (
-    !Number.isSafeInteger(timeoutMs) ||
-    timeoutMs < GATEWAY_LIMITS.minTimeoutMs ||
-    timeoutMs > GATEWAY_LIMITS.maxTimeoutMs
+    !inRange(timeoutMs, GATEWAY_LIMITS.minTimeoutMs, GATEWAY_LIMITS.maxTimeoutMs) ||
+    !inRange(maxAttempts, 1, GATEWAY_LIMITS.maxAttempts) ||
+    !inRange(failureThreshold, 1, GATEWAY_LIMITS.maxFailureThreshold) ||
+    !inRange(cooldownMs, 1, GATEWAY_LIMITS.maxCooldownMs)
   ) {
-    throw new RangeError("the timeout of the model gateway is out of range");
+    throw new RangeError("a limit of the model gateway is out of range");
   }
   const now = options.now ?? Date.now;
+  const entries = options.providers.map((provider) => ({
+    provider,
+    breaker: new CircuitBreaker(failureThreshold, cooldownMs, now),
+  }));
+
+  /** One call to one provider, given up on when the time is up or the caller leaves, whatever the adapter does. */
+  async function attempt<T>(
+    provider: ModelProvider,
+    request: ModelRequest<T>,
+    prepared: Prepared,
+    context: CallContext,
+  ): Promise<AttemptOutcome<T>> {
+    const failed = (code: ModelErrorCode, usage?: ModelUsage): AttemptOutcome<T> => ({
+      ok: false,
+      error: new ModelError(code),
+      attempt: {
+        provider: provider.name,
+        model: provider.model,
+        outcome: code,
+        ...(usage === undefined ? {} : { usage }),
+      },
+    });
+
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal =
+      context.signal === undefined ? timeout : AbortSignal.any([context.signal, timeout]);
+    const providerRequest: ProviderRequest = {
+      model: provider.model,
+      system: prepared.prompt.system,
+      user: prepared.prompt.user,
+      jsonSchema: prepared.jsonSchema,
+      maxOutputTokens: request.maxOutputTokens,
+      signal,
+    };
+    let response: ProviderResponse;
+    try {
+      response = await abortable(provider.complete(providerRequest), signal);
+    } catch (error) {
+      if (context.signal?.aborted) return failed("aborted");
+      if (timeout.aborted) return failed("timeout");
+      return failed(error instanceof ProviderFailure ? error.code : "provider_unavailable");
+    }
+
+    // What the call used is worked out first, because it is billed whether or not the answer can be
+    // used, and a failure from here on carries it.
+    if (!hasUsage(response)) return failed("provider_unavailable");
+    let cost: number;
+    try {
+      cost = costMicros(response.inputTokens, response.outputTokens, provider.price);
+    } catch {
+      return failed("provider_unavailable");
+    }
+    const used: ModelUsage = {
+      inputTokens: response.inputTokens,
+      outputTokens: response.outputTokens,
+      costMicros: cost,
+    };
+
+    // The answer is checked, and is data until it has been.
+    const fault = answerFault(response, request.maxOutputTokens);
+    if (fault !== undefined) return failed(fault, used);
+    const json = parseJson(response.text);
+    if (!json.ok) return failed("output_invalid", used);
+    const parsed = request.output.safeParse(json.value);
+    if (!parsed.success) return failed("output_invalid", used);
+    return {
+      ok: true,
+      value: parsed.data,
+      attempt: { provider: provider.name, model: provider.model, outcome: "ok", usage: used },
+    };
+  }
 
   return {
+    providers: () =>
+      entries.map(({ provider, breaker }) => ({
+        name: provider.name,
+        model: provider.model,
+        ...breaker.status(),
+      })),
+
     async call<T>(context: CallContext, request: ModelRequest<T>): Promise<ModelResult<T>> {
       const started = now();
-      let provider: ModelProvider | undefined;
+      const attempts: ModelAttempt[] = [];
+      const totals = (): { inputTokens: number; outputTokens: number; costMicros: number } => ({
+        inputTokens: attempts.reduce((sum, one) => sum + (one.usage?.inputTokens ?? 0), 0),
+        outputTokens: attempts.reduce((sum, one) => sum + (one.usage?.outputTokens ?? 0), 0),
+        costMicros: totalCost(attempts),
+      });
       try {
         checkRequest(context, request);
         if (context.signal?.aborted) throw new ModelError("aborted");
 
         // 1. What may leave the platform. A class that the policy does not name does not.
-        // The wait for the policy is given up when the caller leaves, and the caller is looked at once more just before the provider is called (step 5).
+        // The wait for the policy is given up when the caller leaves, and the caller is looked at again
+        // before each provider is called (step 5).
         let permitted: ReadonlySet<DataClass>;
         try {
           const pending = options.policy.permittedClasses(context.organisationId);
@@ -221,106 +367,101 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
           throw new ModelError("invalid_request");
         }
         if (jsonSchema["type"] !== "object") throw new ModelError("invalid_request");
+        const prepared: Prepared = { prompt, jsonSchema, redactions };
 
-        // 4. A provider that can take it.
+        // 4. The providers that have room for it, in the order given.
         const needed =
           estimateTokens(prompt.system) +
           estimateTokens(prompt.user) +
           estimateTokens(JSON.stringify(jsonSchema)) +
           request.maxOutputTokens;
-        provider = options.providers.find(
-          ({ capabilities }) =>
+        const candidates = entries.filter(
+          ({ provider: { capabilities } }) =>
             needed <= capabilities.maxContextTokens &&
             request.maxOutputTokens <= capabilities.maxOutputTokens,
         );
-        if (provider === undefined) throw new ModelError("no_capable_provider");
-        // Nothing is sent for a caller who has gone, however long the steps before took.
-        if (context.signal?.aborted) throw new ModelError("aborted");
+        if (candidates.length === 0) throw new ModelError("no_capable_provider");
 
-        // 5. The call, given up when the time is up or the caller leaves, whatever the adapter does.
-        const timeout = AbortSignal.timeout(timeoutMs);
-        const signal =
-          context.signal === undefined ? timeout : AbortSignal.any([context.signal, timeout]);
-        let response: ProviderResponse;
-        try {
-          response = await abortable(
-            provider.complete({
+        // 5. The first that is in use and answers. Another is tried only for a failure that is the
+        // provider's own, and not for an answer that was given and is no good (which was paid for, and
+        // is the caller's to decide about).
+        let last: ModelErrorCode = "provider_unavailable";
+        for (const { provider, breaker } of candidates) {
+          if (attempts.length >= maxAttempts) break;
+          // Nothing is sent for a caller who has gone, however long the steps before took.
+          if (context.signal?.aborted) throw new ModelError("aborted", [...attempts]);
+          if (!breaker.tryAcquire()) continue;
+
+          const outcome = await attempt(provider, request, prepared, context);
+          attempts.push(outcome.attempt);
+          const code = outcome.ok ? "ok" : outcome.error.code;
+          if (code === "aborted") breaker.release();
+          else if (PROVIDER_FAULTS.has(code as ModelErrorCode)) breaker.failure();
+          else breaker.success();
+
+          if (outcome.ok) {
+            const spent = totals();
+            options.logger?.info("model call", {
+              ...loggable(context, request),
+              provider: provider.name,
               model: provider.model,
-              system: prompt.system,
-              user: prompt.user,
-              jsonSchema,
-              maxOutputTokens: request.maxOutputTokens,
-              signal,
-            }),
-            signal,
-          );
-        } catch (error) {
-          if (context.signal?.aborted) throw new ModelError("aborted");
-          if (timeout.aborted) throw new ModelError("timeout");
-          if (error instanceof ProviderFailure) throw new ModelError(error.code);
-          throw new ModelError("provider_unavailable");
+              outcome: "ok",
+              attempts: attempts.length,
+              ...spent,
+              redactions,
+              durationMs: now() - started,
+            });
+            return {
+              value: outcome.value,
+              provider: provider.name,
+              model: provider.model,
+              inputTokens: outcome.attempt.usage?.inputTokens ?? 0,
+              outputTokens: outcome.attempt.usage?.outputTokens ?? 0,
+              costMicros: spent.costMicros,
+              attempts: [...attempts],
+              redactions,
+            };
+          }
+          last = outcome.error.code;
+          if (!outcome.error.retryable) throw new ModelError(last, [...attempts]);
+          options.logger?.warn("model attempt failed", {
+            ...loggable(context, request),
+            provider: provider.name,
+            model: provider.model,
+            outcome: last,
+            attempt: attempts.length,
+            durationMs: now() - started,
+          });
         }
-
-        // 6. What the call used is worked out first, because it is billed whether or not the answer can be
-        // used, and a failure from here on carries it.
-        if (!hasUsage(response)) throw new ModelError("provider_unavailable");
-        let cost: number;
-        try {
-          cost = costMicros(response.inputTokens, response.outputTokens, provider.price);
-        } catch {
-          throw new ModelError("provider_unavailable");
-        }
-        const used: ModelUsage = {
-          provider: provider.name,
-          model: provider.model,
-          inputTokens: response.inputTokens,
-          outputTokens: response.outputTokens,
-          costMicros: cost,
-        };
-
-        // 7. The answer is checked, and is data until it has been.
-        const fault = answerFault(response, request.maxOutputTokens);
-        if (fault !== undefined) throw new ModelError(fault, used);
-        const json = parseJson(response.text);
-        if (!json.ok) throw new ModelError("output_invalid", used);
-        const parsed = request.output.safeParse(json.value);
-        if (!parsed.success) throw new ModelError("output_invalid", used);
-
-        options.logger?.info("model call", {
-          ...loggable(context, request),
-          provider: provider.name,
-          model: provider.model,
-          outcome: "ok",
-          inputTokens: response.inputTokens,
-          outputTokens: response.outputTokens,
-          costMicros: cost,
-          redactions,
-          durationMs: now() - started,
-        });
-        return {
-          value: parsed.data,
-          provider: provider.name,
-          model: provider.model,
-          inputTokens: response.inputTokens,
-          outputTokens: response.outputTokens,
-          costMicros: cost,
-          redactions,
-        };
+        // Every provider that had room failed in a way that is its own, or none is in use.
+        throw new ModelError(last, [...attempts]);
       } catch (error) {
         // Whatever went wrong, the caller gets a ModelError, and the log gets its code and no more.
         const failure =
-          error instanceof ModelError ? error : new ModelError("provider_unavailable");
+          error instanceof ModelError
+            ? error
+            : new ModelError("provider_unavailable", [...attempts]);
+        const lastAttempt = failure.attempts[failure.attempts.length - 1];
         options.logger?.warn("model call failed", {
           ...loggable(context, request),
-          ...(provider === undefined ? {} : { provider: provider.name, model: provider.model }),
-          outcome: failure.code,
-          ...(failure.usage === undefined
+          ...(lastAttempt === undefined
             ? {}
-            : {
-                inputTokens: failure.usage.inputTokens,
-                outputTokens: failure.usage.outputTokens,
-                costMicros: failure.usage.costMicros,
-              }),
+            : { provider: lastAttempt.provider, model: lastAttempt.model }),
+          outcome: failure.code,
+          attempts: failure.attempts.length,
+          ...(failure.attempts.some((one) => one.usage !== undefined)
+            ? {
+                inputTokens: failure.attempts.reduce(
+                  (sum, one) => sum + (one.usage?.inputTokens ?? 0),
+                  0,
+                ),
+                outputTokens: failure.attempts.reduce(
+                  (sum, one) => sum + (one.usage?.outputTokens ?? 0),
+                  0,
+                ),
+                costMicros: failure.costMicros,
+              }
+            : {}),
           durationMs: now() - started,
         });
         throw failure;
