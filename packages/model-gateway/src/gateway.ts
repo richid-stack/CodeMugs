@@ -1,7 +1,13 @@
 import { z } from "zod";
 import type { Logger } from "@codemugs/logging";
 import { CircuitBreaker, type BreakerState } from "./breaker.js";
-import type { BudgetClaim, BudgetGrant, BudgetLedger, BudgetReservation } from "./budget.js";
+import type {
+  BudgetClaim,
+  BudgetGrant,
+  BudgetLedger,
+  BudgetReservation,
+  BudgetUsageRecord,
+} from "./budget.js";
 import { costMicros, estimateTokens, isValidPrice } from "./cost.js";
 import {
   ModelError,
@@ -45,6 +51,8 @@ export const GATEWAY_LIMITS = {
 } as const;
 
 const NAME = /^[a-z][a-z0-9._-]{0,63}$/;
+/** The longest name of a model that a ledger keeps. */
+const MAX_MODEL_NAME = 200;
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ORGANISATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -123,6 +131,18 @@ function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+/** What an attempt was, for a ledger that keeps usage: names, a code and counts. */
+function usageOf(attempt: ModelAttempt): BudgetUsageRecord {
+  return {
+    provider: attempt.provider,
+    model: attempt.model,
+    outcome: attempt.outcome,
+    ...(attempt.usage === undefined
+      ? {}
+      : { inputTokens: attempt.usage.inputTokens, outputTokens: attempt.usage.outputTokens }),
+  };
+}
+
 function checkProviders(providers: readonly ModelProvider[]): void {
   if (providers.length === 0) throw new RangeError("the model gateway needs at least one provider");
   const names = new Set<string>();
@@ -132,6 +152,7 @@ function checkProviders(providers: readonly ModelProvider[]): void {
       !NAME.test(provider.name) ||
       names.has(provider.name) ||
       provider.model.length === 0 ||
+      provider.model.length > MAX_MODEL_NAME ||
       !isValidPrice(provider.price) ||
       !Number.isSafeInteger(capabilities.maxContextTokens) ||
       capabilities.maxContextTokens < 1 ||
@@ -365,12 +386,13 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
   async function settle<T>(
     reservation: BudgetReservation,
     chargedMicros: number,
+    record: BudgetUsageRecord | undefined,
     context: CallContext,
     request: ModelRequest<T>,
   ): Promise<void> {
     try {
       if (chargedMicros === 0) await reservation.release();
-      else await reservation.settle(chargedMicros);
+      else await reservation.settle(chargedMicros, record);
     } catch {
       options.logger?.warn("model budget settle failed", {
         ...loggable(context, request),
@@ -509,13 +531,19 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
           // signal only after it has called the provider, so this is the last place where nothing is sent.
           if (context.signal?.aborted) {
             breaker.release();
-            await settle(grant.reservation, 0, context, request);
+            await settle(grant.reservation, 0, undefined, context, request);
             throw new ModelError("aborted", [...attempts]);
           }
 
           const outcome = await attempt(provider, request, prepared, context, worst);
           attempts.push(outcome.attempt);
-          await settle(grant.reservation, outcome.attempt.chargedMicros, context, request);
+          await settle(
+            grant.reservation,
+            outcome.attempt.chargedMicros,
+            usageOf(outcome.attempt),
+            context,
+            request,
+          );
           const code = outcome.ok ? "ok" : outcome.error.code;
           if (code === "aborted") breaker.release();
           else if (PROVIDER_FAULTS.has(code as ModelErrorCode)) breaker.failure();

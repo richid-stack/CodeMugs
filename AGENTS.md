@@ -16,7 +16,7 @@ pnpm db:migrate   # apply the migrations (needs MIGRATION_DATABASE_URL, a migrat
 pnpm infra:up     # Postgres and Redis locally (needs Docker)
 ```
 
-Database tests (`packages/storage`, `packages/auth`, `packages/jobs`, `core/system-graph-read`, `core/system-graph`, `core/repository-analysis`, `apps/analysis-worker`, `apps/ingestion`, `apps/worker`, `apps/migrate`, `apps/api` and `tests/end-to-end`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
+Database tests (`packages/storage`, `packages/auth`, `packages/jobs`, `packages/model-budget`, `core/system-graph-read`, `core/system-graph`, `core/repository-analysis`, `apps/analysis-worker`, `apps/ingestion`, `apps/worker`, `apps/migrate`, `apps/api` and `tests/end-to-end`) are skipped unless `CODEMUGS_TEST_DATABASE_URL` points at a superuser connection to a disposable PostgreSQL. CI sets `REQUIRE_DATABASE_TESTS=true`, which turns a missing database into a failure. See `packages/storage/README.md`.
 
 ## Layout
 

@@ -22,7 +22,7 @@
 
 ## Planned (not built)
 
-- **A ledger that survives a restart and is shared between processes**: tables with tenant isolation, an atomic reserve in one statement, a sweep that treats a stale reservation as spent, and **usage kept per organisation** for metering (a migration, and the next part of step 8).
+- **A ledger that survives a restart and is shared between processes**, and **usage kept for each organisation** for metering: built in part four, [ADR 0042](0042-a-budget-ledger-in-postgresql.md). A sweep for reservations that were never closed is still not built.
 - **Who sets the limits**, and what the defaults are, are decisions for the owner (a monthly spend cap is one of the things the real provider's adapter waits for, [open question 10](../open-questions.md)). Nothing here sets one.
 - **An adapter for a real provider**; limits on the rate of calls, which are a different thing from money.
 
