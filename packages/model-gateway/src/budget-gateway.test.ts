@@ -423,6 +423,61 @@ describe("what an attempt is charged when it did not answer", () => {
     expect(told).toEqual(["release", `settle ${result.costMicros}`]);
   });
 
+  it("tells the ledger what an attempt was: names, a code and counts, and nothing that was said", async () => {
+    const MARKER = ["MARKER", "Zq81xLm20pQw93"].join("-");
+    const records: unknown[] = [];
+    const spy: BudgetLedger = {
+      reserve: () =>
+        Promise.resolve({
+          ok: true,
+          reservation: {
+            settle: (_charged, record) => {
+              records.push(record);
+              return Promise.resolve();
+            },
+            release: () => Promise.resolve(),
+          },
+        }),
+    };
+    const g = gateway(
+      [
+        provider("a", [{ text: MARKER, inputTokens: 700, outputTokens: 30, finish: "refused" }]),
+        provider("b", [{ hang: true }]),
+      ],
+      { budget: spy, timeoutMs: 20 },
+    );
+    const refused = await failureOf(
+      g.call(
+        { organisationId: ORG },
+        request({ data: [{ label: "a", dataClass: "source_code", content: MARKER }] }),
+      ),
+    );
+    expect(refused.code).toBe("refused");
+    const slow = await failureOf(
+      gateway([provider("b", [{ hang: true }])], { budget: spy, timeoutMs: 20 }).call(
+        { organisationId: ORG },
+        request(),
+      ),
+    );
+    expect(slow.code).toBe("timeout");
+    const ok = await gateway([provider("c", [{ value: GOOD }])], { budget: spy }).call(
+      { organisationId: ORG },
+      request(),
+    );
+    expect(records).toEqual([
+      { provider: "a", model: "a-model", outcome: "refused", inputTokens: 700, outputTokens: 30 },
+      { provider: "b", model: "b-model", outcome: "timeout" },
+      {
+        provider: "c",
+        model: "c-model",
+        outcome: "ok",
+        inputTokens: ok.inputTokens,
+        outputTokens: ok.outputTokens,
+      },
+    ]);
+    expect(JSON.stringify(records)).not.toContain(MARKER);
+  });
+
   it("reserves for each attempt, and a provider that could not be reached gives its reservation back", async () => {
     const memorised = memory(ROOMY);
     const claimed = recording(memorised);

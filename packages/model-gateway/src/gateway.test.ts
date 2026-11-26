@@ -636,6 +636,23 @@ describe("setting the gateway up", () => {
     ).toThrow(RangeError);
   });
 
+  it("takes a model name of up to 200 characters, which is what a ledger keeps, and refuses a longer one", () => {
+    expect(() =>
+      createModelGateway({
+        budget: unlimitedBudget(),
+        providers: [createMockProvider({ model: "m".repeat(200) })],
+        policy,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      createModelGateway({
+        budget: unlimitedBudget(),
+        providers: [createMockProvider({ model: "m".repeat(201) })],
+        policy,
+      }),
+    ).toThrow(RangeError);
+  });
+
   it("refuses a price that is not whole numbers, and capabilities that are not positive whole numbers", () => {
     expect(() =>
       createModelGateway({

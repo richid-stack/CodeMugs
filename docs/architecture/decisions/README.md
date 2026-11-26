@@ -43,5 +43,6 @@
 | [0039](0039-the-model-gateway.md)                                  | The model gateway                                                                  | Accepted for the first part  |
 | [0040](0040-failover-and-a-circuit-breaker.md)                     | Failover and a circuit breaker in the model gateway                                | Accepted                     |
 | [0041](0041-budgets-in-the-model-gateway.md)                       | Budgets in the model gateway                                                       | Accepted for the part built  |
+| [0042](0042-a-budget-ledger-in-postgresql.md)                      | A budget ledger in PostgreSQL                                                      | Accepted for the part built  |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.

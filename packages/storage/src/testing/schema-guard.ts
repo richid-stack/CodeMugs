@@ -24,15 +24,16 @@ const APPEND_ONLY_TABLES: ReadonlySet<string> = new Set([
   "graph_edges",
   "repository_connections",
   "analysis_requests",
+  "model_ledger_entries",
 ]);
 
 /**
  * Tables that an operator writes and the application only reads, because what is in them decides
- * what a tenant is allowed to reach (which GitHub installations are its own). A tenant that could
+ * what a tenant is allowed to reach or spend (which GitHub installations are its own, how much it may spend on model calls). A tenant that could
  * write one would be able to name someone else's. Because no tenant can write them or probe them,
  * they may hold a unique constraint that spans tenants, which no other table may.
  */
-const OPERATOR_TABLES: ReadonlySet<string> = new Set(["github_installations"]);
+const OPERATOR_TABLES: ReadonlySet<string> = new Set(["github_installations", "model_budgets"]);
 
 /**
  * Tables whose rows may change but are never deleted by a runtime role. Deleting them for

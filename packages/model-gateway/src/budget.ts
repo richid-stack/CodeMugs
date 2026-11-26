@@ -17,10 +17,24 @@ export interface BudgetClaim {
   readonly micros: number;
 }
 
+/**
+ * What an attempt was, for a ledger that keeps usage: names, a code and counts, and **nothing that was
+ * said** (no prompt, no answer, no message of a provider).
+ */
+export interface BudgetUsageRecord {
+  readonly provider: string;
+  readonly model: string;
+  /** "ok", or the code that the attempt failed with. */
+  readonly outcome: string;
+  /** What the provider said it used. Absent when it did not say. */
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+}
+
 /** Room that has been taken for one attempt. It is settled or released once; a second call does nothing. */
 export interface BudgetReservation {
   /** Replaces the reservation with what the attempt was charged. It may be more than was reserved. */
-  settle(chargedMicros: number): Promise<void>;
+  settle(chargedMicros: number, record?: BudgetUsageRecord): Promise<void>;
   /** Gives all of it back: nothing was spent. */
   release(): Promise<void>;
 }

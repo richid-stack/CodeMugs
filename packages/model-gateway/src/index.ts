@@ -7,6 +7,7 @@ export type {
   BudgetLedger,
   BudgetLimits,
   BudgetReservation,
+  BudgetUsageRecord,
   MemoryBudget,
   MemoryBudgetOptions,
 } from "./budget.js";
