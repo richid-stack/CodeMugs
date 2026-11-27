@@ -423,6 +423,46 @@ describe("what an attempt is charged when it did not answer", () => {
     expect(told).toEqual(["release", `settle ${result.costMicros}`]);
   });
 
+  it("keeps what a call was when it cost nothing, and gives back a reservation that has nothing to record", async () => {
+    const told: string[] = [];
+    const spy: BudgetLedger = {
+      reserve: () =>
+        Promise.resolve({
+          ok: true,
+          reservation: {
+            settle: (charged, record) => {
+              told.push(`settle ${charged} ${JSON.stringify(record)}`);
+              return Promise.resolve();
+            },
+            release: () => {
+              told.push("release");
+              return Promise.resolve();
+            },
+          },
+        }),
+    };
+    const free = createMockProvider({
+      name: "free",
+      model: "free-model",
+      price: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+      steps: [{ value: GOOD }],
+    });
+    const result = await gateway([provider("down", [{ fail: "unavailable" }]), free], {
+      budget: spy,
+    }).call({ organisationId: ORG }, request());
+    expect(result.costMicros).toBe(0);
+    expect(told).toEqual([
+      "release",
+      `settle 0 ${JSON.stringify({
+        provider: "free",
+        model: "free-model",
+        outcome: "ok",
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      })}`,
+    ]);
+  });
+
   it("tells the ledger what an attempt was: names, a code and counts, and nothing that was said", async () => {
     const MARKER = ["MARKER", "Zq81xLm20pQw93"].join("-");
     const records: unknown[] = [];

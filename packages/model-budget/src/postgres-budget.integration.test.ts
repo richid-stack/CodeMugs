@@ -181,6 +181,76 @@ describeDatabase("the budget ledger in PostgreSQL", () => {
       expect(await first.usedMicros(org)).toBe(500);
     }, 30_000);
 
+    it("takes an organisation's id in capitals and in lower case for one organisation, and does not let their claims pass each other", async () => {
+      const { org } = await withBudget(500);
+      const first = createPostgresBudget({ pool: h.app });
+      const second = createPostgresBudget({ pool: h.otherApp });
+      const grants = await Promise.all(
+        Array.from({ length: 80 }, (_, i) =>
+          (i % 2 === 0 ? first : second).reserve({
+            organisationId: i % 2 === 0 ? org.toLowerCase() : org.toUpperCase(),
+            micros: 10,
+          }),
+        ),
+      );
+      expect(grants.filter((grant) => grant.ok)).toHaveLength(50);
+      expect(await first.usedMicros(org)).toBe(500);
+    }, 30_000);
+
+    it("makes one lock of an organisation's id whichever way it is spelled", async () => {
+      const { org, budget } = await withBudget(1_000);
+      // Another transaction holds the organisation's lock, as a claim in the middle of its check does.
+      const holder = await h.admin.connect();
+      try {
+        await holder.query("BEGIN");
+        await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+          `codemugs:model_budget:${org.toLowerCase()}`,
+        ]);
+        for (const spelling of [org.toLowerCase(), org.toUpperCase()]) {
+          const claim = budget.reserve({ organisationId: spelling, micros: 1 });
+          const outcome = await Promise.race([
+            claim.then(() => "went through"),
+            new Promise<string>((resolve) => setTimeout(() => resolve("waited"), 300)),
+          ]);
+          expect(outcome).toBe("waited");
+          await holder.query("COMMIT");
+          expect((await claim).ok).toBe(true);
+          await holder.query("BEGIN");
+          await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+            `codemugs:model_budget:${org.toLowerCase()}`,
+          ]);
+        }
+        await holder.query("COMMIT");
+      } finally {
+        holder.release();
+      }
+    });
+
+    it("fails, and grants nothing, when the ledger says that less than nothing has been spent", async () => {
+      const month = await withBudget(1_000, 1_000);
+      const thisMonth = "date_trunc('month', now() AT TIME ZONE 'UTC')::date";
+      const lastMonth =
+        "(date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month')::date";
+      const standalone = (org: string, period: string, task: string | null) =>
+        h.admin.query(
+          `INSERT INTO model_ledger_entries (organisation_id, id, reservation_id, kind, period, task_id, micros)
+           VALUES ($1, $2, $3, 'settle', ${period}, $4, -1)`,
+          [org, randomUUID(), randomUUID(), task],
+        );
+      await standalone(month.org, thisMonth, null);
+      await expect(
+        month.budget.reserve({ organisationId: month.org, micros: 1 }),
+      ).rejects.toThrow();
+      const task = await withBudget(1_000, 1_000);
+      await standalone(task.org, lastMonth, "t1");
+      await expect(
+        task.budget.reserve({ organisationId: task.org, taskId: "t1", micros: 1 }),
+      ).rejects.toThrow();
+      // The month's sum is not negative, so a claim with no task is not in the way of it.
+      await granted(task.budget.reserve({ organisationId: task.org, micros: 1 }));
+      expect(await entries(month.org)).toHaveLength(1);
+    });
+
     it("fails, and takes nothing, for a claim that is not whole, a task id that is not valid, or an organisation that is not an id", async () => {
       const { org, budget } = await withBudget(1_000);
       for (const micros of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
@@ -528,6 +598,45 @@ describeDatabase("the budget ledger in PostgreSQL", () => {
       const spent = await createPostgresBudget({ pool: h.app }).usedMicros(org);
       expect(spent).toBe(3 * actual);
     }, 30_000);
+
+    it("keeps what a call that cost nothing was", async () => {
+      const org = await h.createOrganisation("Org");
+      await h.setBudget(org, 1_000_000);
+      const free = createMockProvider({
+        name: "free",
+        model: "free-model",
+        price: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+        steps: [{ value: { summary: "x" } }],
+      });
+      const result = await createModelGateway({
+        providers: [free],
+        policy: permitClasses([]),
+        budget: createPostgresBudget({ pool: h.app }),
+      }).call({ organisationId: org }, request);
+      expect(result.costMicros).toBe(0);
+      expect(
+        (await entries(org)).map((row) => [
+          row.kind,
+          row.micros,
+          row.provider,
+          row.model,
+          row.outcome,
+          row.input_tokens,
+          row.output_tokens,
+        ]),
+      ).toEqual([
+        ["reserve", "0", null, null, null, null, null],
+        [
+          "settle",
+          "0",
+          "free",
+          "free-model",
+          "ok",
+          String(result.inputTokens),
+          String(result.outputTokens),
+        ],
+      ]);
+    });
 
     it("sends nothing when the ledger cannot be read", async () => {
       const broken = createPostgresBudget({

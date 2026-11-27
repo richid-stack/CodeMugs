@@ -32,7 +32,10 @@ const TASK_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * of the transaction and needs no privilege on any table.
  */
 const LOCK = "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))";
-const lockKey = (organisationId: string): string => `codemugs:model_budget:${organisationId}`;
+// PostgreSQL reads a UUID in capitals and in lower case as the same organisation, so the key is made
+// from the lower-case spelling: two spellings must not be two locks.
+const lockKey = (organisationId: string): string =>
+  `codemugs:model_budget:${organisationId.toLowerCase()}`;
 
 /**
  * Adds the entry that closes a reservation: for the difference between what it was charged and what it
@@ -51,6 +54,17 @@ const CLOSE = `
     FROM model_ledger_entries r
    WHERE r.organisation_id = $1 AND r.reservation_id = $2 AND r.kind = 'reserve'
   ON CONFLICT (organisation_id, reservation_id) WHERE kind <> 'reserve' DO NOTHING`;
+
+/**
+ * What a sum of entries says has been spent. A negative sum cannot be right (every settle is against a
+ * reservation, which is not negative), and treating it as credit would grant what the limit does not
+ * allow, so it throws, and the gateway sends nothing.
+ */
+function spentOf(sum: string | undefined): bigint {
+  const spent = BigInt(sum ?? "0");
+  if (spent < 0n) throw new RangeError("the ledger holds a negative total");
+  return spent;
+}
 
 function isAmount(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
@@ -107,10 +121,12 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
 
     const refused = await withTenant(pool, organisationId, async (db) => {
       await db.query(LOCK, [lockKey(organisationId)]);
-      // The month is the database's, so that every process agrees on which one it is.
+      // The month is the database's, so that every process agrees on which one it is. It is read from
+      // the clock now, after the lock: now() is the start of the transaction, which may be before a
+      // month ended that this claim waited through.
       const limits = await db.query<{ monthly: string; task: string | null; period: string }>(
         `SELECT monthly_micros::text AS monthly, task_micros::text AS task,
-                date_trunc('month', now() AT TIME ZONE 'UTC')::date::text AS period
+                date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC')::date::text AS period
            FROM model_budgets WHERE organisation_id = $1`,
         [organisationId],
       );
@@ -124,7 +140,7 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
            FROM model_ledger_entries WHERE organisation_id = $1 AND period = $2::date`,
         [organisationId, row.period],
       );
-      if (BigInt(monthSpent.rows[0]?.used ?? "0") + wanted > BigInt(row.monthly)) {
+      if (spentOf(monthSpent.rows[0]?.used) + wanted > BigInt(row.monthly)) {
         return "organisation" as const;
       }
       if (taskId !== undefined && row.task !== null) {
@@ -133,7 +149,7 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
              FROM model_ledger_entries WHERE organisation_id = $1 AND task_id = $2`,
           [organisationId, taskId],
         );
-        if (BigInt(taskSpent.rows[0]?.used ?? "0") + wanted > BigInt(row.task)) {
+        if (spentOf(taskSpent.rows[0]?.used) + wanted > BigInt(row.task)) {
           return "task" as const;
         }
       }
@@ -153,6 +169,9 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
 
   return {
     reserve,
+    // A read, which waits for no lock, so now() (one value for the whole statement) is the right clock:
+    // clock_timestamp() changes while a scan runs, and a scan across a month's end could count rows
+    // against two months.
     usedMicros: (organisationId, taskId) =>
       withTenant(
         pool,
