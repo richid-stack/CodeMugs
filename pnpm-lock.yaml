@@ -290,6 +290,18 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
+  packages/model-provider-anthropic:
+    dependencies:
+      '@codemugs/configuration':
+        specifier: workspace:*
+        version: link:../configuration
+      '@codemugs/model-gateway':
+        specifier: workspace:*
+        version: link:../model-gateway
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   packages/storage:
     dependencies:
       pg:
