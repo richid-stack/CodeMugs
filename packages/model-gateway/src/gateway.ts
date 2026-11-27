@@ -391,7 +391,9 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
     request: ModelRequest<T>,
   ): Promise<void> {
     try {
-      if (chargedMicros === 0) await reservation.release();
+      // Nothing was charged and nothing was reported: the room is given back and there is no usage to
+      // keep. A provider that reported usage is recorded whatever it cost, a price of nothing included.
+      if (chargedMicros === 0 && record?.inputTokens === undefined) await reservation.release();
       else await reservation.settle(chargedMicros, record);
     } catch {
       options.logger?.warn("model budget settle failed", {
