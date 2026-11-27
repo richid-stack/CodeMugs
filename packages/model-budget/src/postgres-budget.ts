@@ -169,6 +169,9 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
 
   return {
     reserve,
+    // A read, which waits for no lock, so now() (one value for the whole statement) is the right clock:
+    // clock_timestamp() changes while a scan runs, and a scan across a month's end could count rows
+    // against two months.
     usedMicros: (organisationId, taskId) =>
       withTenant(
         pool,
@@ -180,7 +183,7 @@ export function createPostgresBudget(options: PostgresBudgetOptions): PostgresBu
                   `SELECT coalesce(sum(micros), 0)::text AS used
                      FROM model_ledger_entries
                     WHERE organisation_id = $1
-                      AND period = date_trunc('month', clock_timestamp() AT TIME ZONE 'UTC')::date`,
+                      AND period = date_trunc('month', now() AT TIME ZONE 'UTC')::date`,
                   [organisationId],
                 )
               : await db.query<{ used: string }>(
