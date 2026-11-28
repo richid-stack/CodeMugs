@@ -5,6 +5,7 @@ import {
   permitClasses,
   ProviderFailure,
   unlimitedBudget,
+  type DataClass,
   type ProviderRequest,
 } from "@codemugs/model-gateway";
 import { afterEach, describe, expect, it } from "vitest";
@@ -137,6 +138,18 @@ describe("the Anthropic provider", () => {
       });
       expect(made.price).toEqual(PRICE);
       expect(made.name).toBe("anthropic");
+    });
+
+    it("says which classes of data its terms allow when the deployment says so, as a copy, and leaves it out when it does not", () => {
+      const classes: DataClass[] = ["platform_metadata"];
+      const made = provider("http://127.0.0.1:1", { dataClasses: classes });
+      expect(made.capabilities.dataClasses).toEqual(["platform_metadata"]);
+      classes.push("source_code");
+      expect(made.capabilities.dataClasses).toEqual(["platform_metadata"]);
+      expect(provider("http://127.0.0.1:1", { dataClasses: [] }).capabilities.dataClasses).toEqual(
+        [],
+      );
+      expect(provider("http://127.0.0.1:1").capabilities).not.toHaveProperty("dataClasses");
     });
 
     it("refuses a schema it cannot send as it means, before anything is sent and with no charge", async () => {

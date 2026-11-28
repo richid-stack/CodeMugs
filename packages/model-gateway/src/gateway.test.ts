@@ -1017,3 +1017,163 @@ describe("a prompt in a language that takes more tokens to a character", () => {
     );
   });
 });
+
+describe("a provider's own terms for data", () => {
+  const FREE = { dataClasses: ["platform_metadata"] } as const;
+
+  function twoProviders(first: ModelProvider, second: ModelProvider, policy = everything) {
+    return createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [first, second],
+      policy: permitClasses(policy),
+    });
+  }
+
+  it("never sends a class that the provider's terms do not list, and takes the next provider that may have it", async () => {
+    const restricted = createMockProvider({
+      name: "free",
+      steps: [{ value: GOOD }],
+      capabilities: FREE,
+    });
+    const open = createMockProvider({ name: "paid", steps: [{ value: GOOD }] });
+    const gateway = twoProviders(restricted, open);
+    const result = await gateway.call(
+      { organisationId: ORG },
+      request({ data: [file("a", "const a = 1;")] }),
+    );
+    expect(result.provider).toBe("paid");
+    expect(restricted.calls).toHaveLength(0);
+    // And what it may have goes to it, first, as the order says.
+    const metadata = await gateway.call(
+      { organisationId: ORG },
+      request({ data: [file("m", "a count", "platform_metadata")] }),
+    );
+    expect(metadata.provider).toBe("free");
+  });
+
+  it("sends nothing at all when no provider may have the data, and reserves nothing", async () => {
+    const restricted = createMockProvider({ capabilities: FREE });
+    let reserved = 0;
+    const gateway = createModelGateway({
+      budget: {
+        reserve: () => {
+          reserved += 1;
+          return Promise.reject(new Error("must not be reached"));
+        },
+      },
+      providers: [restricted],
+      policy: permitClasses(everything),
+    });
+    const error = await failureOf(
+      gateway.call({ organisationId: ORG }, request({ data: [file("a", "const a = 1;")] })),
+    );
+    expect(error.code).toBe("no_permitted_provider");
+    expect(error.retryable).toBe(false);
+    expect(error.attempts).toEqual([]);
+    expect(restricted.calls).toHaveLength(0);
+    expect(reserved).toBe(0);
+  });
+
+  it("is not failed over to when the provider that was tried fails", async () => {
+    const down = createMockProvider({ name: "down", steps: [{ fail: "unavailable" }] });
+    const restricted = createMockProvider({
+      name: "free",
+      steps: [{ value: GOOD }],
+      capabilities: FREE,
+    });
+    const gateway = twoProviders(down, restricted);
+    const error = await failureOf(
+      gateway.call({ organisationId: ORG }, request({ data: [file("a", "const a = 1;")] })),
+    );
+    expect(error.code).toBe("provider_unavailable");
+    expect(restricted.calls).toHaveLength(0);
+  });
+
+  it("holds a request with every class it has to the terms: one that is not listed is enough", async () => {
+    const two = createMockProvider({
+      name: "two",
+      steps: [{ value: GOOD }],
+      capabilities: { dataClasses: ["platform_metadata", "telemetry"] },
+    });
+    const fallback = createMockProvider({ name: "fallback", steps: [{ value: GOOD }] });
+    const gateway = twoProviders(two, fallback);
+    const both = await gateway.call(
+      { organisationId: ORG },
+      request({
+        data: [file("m", "a", "platform_metadata"), file("t", "b", "telemetry")],
+      }),
+    );
+    expect(both.provider).toBe("two");
+    const mixed = await gateway.call(
+      { organisationId: ORG },
+      request({ data: [file("m", "a", "platform_metadata"), file("c", "b", "source_code")] }),
+    );
+    expect(mixed.provider).toBe("fallback");
+    expect(two.calls).toHaveLength(1);
+  });
+
+  it("takes a request that holds no data, even from a provider that may have none", async () => {
+    const none = createMockProvider({
+      steps: [{ value: GOOD }],
+      capabilities: { dataClasses: [] },
+    });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [none],
+      policy: permitClasses(everything),
+    });
+    expect((await gateway.call({ organisationId: ORG }, request())).provider).toBe("mock");
+    const error = await failureOf(
+      gateway.call(
+        { organisationId: ORG },
+        request({ data: [file("m", "a", "platform_metadata")] }),
+      ),
+    );
+    expect(error.code).toBe("no_permitted_provider");
+  });
+
+  it("only narrows the organisation's policy: what the policy does not permit is not sent to a provider that lists it", async () => {
+    const lists = createMockProvider({
+      steps: [{ value: GOOD }],
+      capabilities: { dataClasses: ["source_code"] },
+    });
+    const gateway = createModelGateway({
+      budget: unlimitedBudget(),
+      providers: [lists],
+      policy: permitClasses(["telemetry"]),
+    });
+    const error = await failureOf(
+      gateway.call({ organisationId: ORG }, request({ data: [file("a", "x")] })),
+    );
+    expect(error.code).toBe("not_permitted");
+    expect(lists.calls).toHaveLength(0);
+  });
+
+  it("puts the terms before the size: the class decides first, and a provider with room that may not have it is not one", async () => {
+    const small = createMockProvider({ name: "small", capabilities: { maxContextTokens: 200 } });
+    const restricted = createMockProvider({ name: "free", capabilities: FREE });
+    const gateway = twoProviders(small, restricted);
+    const error = await failureOf(
+      gateway.call({ organisationId: ORG }, request({ data: [file("a", "x".repeat(3_000))] })),
+    );
+    // The restricted provider has room and may not have it; the other may have it and has no room.
+    expect(error.code).toBe("no_capable_provider");
+    expect(restricted.calls).toHaveLength(0);
+    expect(small.calls).toHaveLength(0);
+  });
+
+  it("refuses a provider whose terms are not a list of classes", () => {
+    for (const dataClasses of [["nothing"], "source_code", 5, [5], [null]]) {
+      const provider = createMockProvider({
+        capabilities: { dataClasses } as unknown as { dataClasses: readonly DataClass[] },
+      });
+      expect(() =>
+        createModelGateway({
+          budget: unlimitedBudget(),
+          providers: [provider],
+          policy: permitClasses(everything),
+        }),
+      ).toThrow(RangeError);
+    }
+  });
+});

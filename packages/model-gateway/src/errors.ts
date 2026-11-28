@@ -5,6 +5,8 @@ export type ModelErrorCode =
   | "not_permitted"
   /** The policy could not be read, so nothing is sent (it fails closed). */
   | "policy_unavailable"
+  /** No configured provider may be sent the classes of data that the request holds (a provider's own terms, as the deployment declared them). */
+  | "no_permitted_provider"
   /** No configured provider can take a request of this size. */
   | "no_capable_provider"
   /** The provider could not be reached or failed. */
@@ -32,6 +34,7 @@ const MESSAGES: Readonly<Record<ModelErrorCode, string>> = {
   invalid_request: "the request is not valid",
   not_permitted: "the organisation's policy does not allow this data to be sent to a model",
   policy_unavailable: "the policy for model requests could not be read",
+  no_permitted_provider: "no model provider may be sent this data",
   no_capable_provider: "no provider can take a request of this size",
   provider_unavailable: "the model provider is not available",
   rate_limited: "the model provider is limiting requests",

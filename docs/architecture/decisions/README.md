@@ -45,5 +45,6 @@
 | [0041](0041-budgets-in-the-model-gateway.md)                       | Budgets in the model gateway                                                       | Accepted for the part built  |
 | [0042](0042-a-budget-ledger-in-postgresql.md)                      | A budget ledger in PostgreSQL                                                      | Accepted for the part built  |
 | [0043](0043-an-adapter-for-the-anthropic-messages-api.md)          | An adapter for the Anthropic Messages API                                          | Accepted for the part built  |
+| [0044](0044-a-providers-terms-for-data.md)                         | A provider's terms for data, apart from the organisation's policy                  | Accepted                     |
 
 See [0001](0001-record-architecture-decisions.md) for the format and when to write one.
