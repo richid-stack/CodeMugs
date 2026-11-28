@@ -143,6 +143,14 @@ function usageOf(attempt: ModelAttempt): BudgetUsageRecord {
   };
 }
 
+function validClasses(classes: readonly DataClass[] | undefined): boolean {
+  if (classes === undefined) return true;
+  const list: unknown = classes;
+  return (
+    Array.isArray(list) && list.every((one: unknown) => typeof one === "string" && CLASSES.has(one))
+  );
+}
+
 function checkProviders(providers: readonly ModelProvider[]): void {
   if (providers.length === 0) throw new RangeError("the model gateway needs at least one provider");
   const names = new Set<string>();
@@ -157,7 +165,8 @@ function checkProviders(providers: readonly ModelProvider[]): void {
       !Number.isSafeInteger(capabilities.maxContextTokens) ||
       capabilities.maxContextTokens < 1 ||
       !Number.isSafeInteger(capabilities.maxOutputTokens) ||
-      capabilities.maxOutputTokens < 1
+      capabilities.maxOutputTokens < 1 ||
+      !validClasses(capabilities.dataClasses)
     ) {
       throw new RangeError("a model provider is not valid or its name is used twice");
     }
@@ -472,7 +481,17 @@ export function createModelGateway(options: GatewayOptions): ModelGateway {
           estimateTokens(prompt.user) +
           estimateTokens(JSON.stringify(jsonSchema));
         const needed = inputEstimate + request.maxOutputTokens;
-        const candidates = entries.filter(
+        // A provider that may not be sent a class that the request holds is not a candidate, for
+        // this call or for a failover: the organisation's policy and the provider's terms must both allow it.
+        const classes = new Set(request.data.map((part) => part.dataClass));
+        const allowed = entries.filter(({ provider: { capabilities } }) => {
+          const { dataClasses } = capabilities;
+          return (
+            dataClasses === undefined || [...classes].every((one) => dataClasses.includes(one))
+          );
+        });
+        if (allowed.length === 0) throw new ModelError("no_permitted_provider");
+        const candidates = allowed.filter(
           ({ provider: { capabilities } }) =>
             needed <= capabilities.maxContextTokens &&
             request.maxOutputTokens <= capabilities.maxOutputTokens,

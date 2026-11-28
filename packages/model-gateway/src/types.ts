@@ -70,6 +70,14 @@ export interface ProviderCapabilities {
   readonly maxOutputTokens: number;
   /** Whether the provider is given the schema to constrain its answer (`native`) or only told of it in the prompt (`prompted`). The gateway validates the answer either way. */
   readonly structuredOutput: "native" | "prompted";
+  /**
+   * The classes of data that this provider may be sent, as its terms allow and the deployment declared:
+   * a provider on a free tier, whose terms let it use what it is sent or have people read it, may be
+   * sent little or nothing. A request that holds a class that is not listed is **never** sent to it,
+   * and is not failed over to it. It narrows what the organisation's policy permits and never widens
+   * it. Absent means that the policy alone decides. `[]` means a request that holds no data.
+   */
+  readonly dataClasses?: readonly DataClass[];
 }
 
 /** Whole millionths of a US dollar for a million tokens. Integers, so that no cost is a fraction of a float. */

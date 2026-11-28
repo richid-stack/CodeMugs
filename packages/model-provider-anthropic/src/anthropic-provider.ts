@@ -1,6 +1,7 @@
 import type { Secret } from "@codemugs/configuration";
 import {
   ProviderFailure,
+  type DataClass,
   type ModelProvider,
   type ProviderPrice,
   type ProviderRequest,
@@ -46,6 +47,12 @@ export interface AnthropicProviderOptions {
   readonly price: ProviderPrice;
   readonly maxContextTokens: number;
   readonly maxOutputTokens: number;
+  /**
+   * The classes of data that this key's terms allow the provider to be sent (ADR 0044). Absent means that
+   * the organisation's policy alone decides. A deployment that is on terms that let the provider use or
+   * read what it is sent lists little or nothing.
+   */
+  readonly dataClasses?: readonly DataClass[];
   /** The name that the gateway, the ledger and the log know it by. Default `anthropic`. */
   readonly name?: string;
   /** Must be https, or http on this machine (for tests). Default: the provider's own. */
@@ -269,6 +276,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
       maxContextTokens: options.maxContextTokens,
       maxOutputTokens: options.maxOutputTokens,
       structuredOutput: "native",
+      ...(options.dataClasses === undefined ? {} : { dataClasses: [...options.dataClasses] }),
     },
     price: {
       inputMicrosPerMillionTokens: options.price.inputMicrosPerMillionTokens,
