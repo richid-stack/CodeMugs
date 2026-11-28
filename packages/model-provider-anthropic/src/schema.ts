@@ -202,7 +202,7 @@ function hasCycle(refs: Map<string, Set<string>>, schema: Record<string, unknown
   const defs = isRecord(schema["$defs"]) ? schema["$defs"] : {};
   const state = new Map<string, "visiting" | "done">();
   const visit = (name: string): boolean => {
-    if (name !== ROOT && !(name in defs)) return true;
+    if (name !== ROOT && !Object.hasOwn(defs, name)) return true;
     const seen = state.get(name);
     if (seen === "visiting") return true;
     if (seen === "done") return false;

@@ -349,6 +349,11 @@ describe("the schema for the provider's structured output", () => {
         "#/$defs/",
         "#/$defs/a/b",
         "#/$defs/a~1b",
+        // Names that every object has and that no definition was given.
+        "#/$defs/toString",
+        "#/$defs/constructor",
+        "#/$defs/hasOwnProperty",
+        "#/$defs/__proto__",
       ]) {
         expect(
           refused(() =>
