@@ -11,12 +11,16 @@ import { Secret } from "@codemugs/configuration";
 import { createModelGateway } from "@codemugs/model-gateway";
 import { createAnthropicProvider } from "@codemugs/model-provider-anthropic";
 
+declare const PRICE_IN: number; // from the price list, never 0 for a paid model
+declare const PRICE_OUT: number;
+
 const provider = createAnthropicProvider({
   apiKey: new Secret(process.env.CODEMUGS_MODEL_API_KEY ?? ""),
   model: "<the model's name>",
   // From the provider's price list, in whole millionths of a US dollar for a million tokens.
-  // Required and never guessed: the budgets are worked out from it.
-  price: { inputMicrosPerMillionTokens: 0, outputMicrosPerMillionTokens: 0 },
+  // Required and never guessed: the budgets are worked out from it. These two numbers are
+  // placeholders that you must replace: a price of 0 means that every call is counted as free.
+  price: { inputMicrosPerMillionTokens: PRICE_IN, outputMicrosPerMillionTokens: PRICE_OUT },
   maxContextTokens: 200_000,
   maxOutputTokens: 8_000,
 });

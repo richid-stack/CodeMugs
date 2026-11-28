@@ -200,7 +200,9 @@ async function readText(response: Response, maxBytes: number): Promise<string> {
 async function failureFor(response: Response): Promise<ProviderFailure> {
   const { status } = response;
   if (status === 500) {
-    // The provider also answers a request that ran out of time with a 500.
+    // The provider also answers a request that ran out of time with a 500, and that one may have been
+    // billed. A body that cannot be read or has no type cannot rule it out, so it is not taken for a
+    // plain failure: only a 500 that says what it is, and is not a timeout, is one.
     let type: string | undefined;
     try {
       const parsed = ErrorBody.safeParse(JSON.parse(await readText(response, MAX_ERROR_BYTES)));
@@ -208,7 +210,9 @@ async function failureFor(response: Response): Promise<ProviderFailure> {
     } catch {
       type = undefined;
     }
-    return new ProviderFailure(type === "timeout_error" ? "timeout" : "unavailable");
+    return new ProviderFailure(
+      type === undefined || type === "timeout_error" ? "timeout" : "unavailable",
+    );
   }
   await response.body?.cancel().catch(() => undefined);
   if (status === 429) return new ProviderFailure("rate_limited");

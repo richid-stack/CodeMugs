@@ -192,7 +192,9 @@ describe("the schema for the provider's structured output", () => {
   it("takes a schema that is 32 levels deep and refuses one that is 33, or too large", () => {
     const nested = (levels: number): Record<string, unknown> => {
       let node: Record<string, unknown> = { type: "string" };
-      for (let i = 0; i < levels; i++) node = { type: "object", properties: { next: node } };
+      for (let i = 0; i < levels; i++) {
+        node = { type: "object", properties: { next: node }, required: ["next"] };
+      }
       return node;
     };
     expect(refused(() => toProviderSchema(nested(32)))).toBe(false);
@@ -206,6 +208,208 @@ describe("the schema for the provider's structured output", () => {
       ),
     };
     expect(refused(() => toProviderSchema(wide))).toBe(true);
+  });
+
+  describe("the limits that the provider answers with a 400, which are found before anything is sent", () => {
+    const optionalProperties = (count: number): Record<string, unknown> => ({
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: count }, (_, i) => [`p${String(i)}`, { type: "string" }]),
+      ),
+    });
+
+    it("takes 24 optional properties and refuses 25, counted over the whole schema", () => {
+      expect(refused(() => toProviderSchema(optionalProperties(24)))).toBe(false);
+      expect(refused(() => toProviderSchema(optionalProperties(25)))).toBe(true);
+      // 13 and 12 in two objects are 25 together.
+      expect(
+        refused(() =>
+          toProviderSchema({
+            type: "object",
+            properties: {
+              inner: optionalProperties(12),
+              ...(optionalProperties(13)["properties"] as object),
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("does not count a property that is required, or a list of keys that is not a property", () => {
+      const all = optionalProperties(40);
+      expect(
+        refused(() =>
+          toProviderSchema({ ...all, required: Object.keys(all["properties"] as object) }),
+        ),
+      ).toBe(false);
+      // 24 optional and 40 required.
+      const mixed = optionalProperties(64);
+      const names = Object.keys(mixed["properties"] as object);
+      expect(refused(() => toProviderSchema({ ...mixed, required: names.slice(0, 40) }))).toBe(
+        false,
+      );
+      expect(refused(() => toProviderSchema({ ...mixed, required: names.slice(0, 39) }))).toBe(
+        true,
+      );
+    });
+
+    it("takes 16 properties that are unions and refuses 17, whether anyOf, oneOf or a list of types", () => {
+      const unions = (count: number, make: (i: number) => Record<string, unknown>) => {
+        const properties = Object.fromEntries(
+          Array.from({ length: count }, (_, i) => [`u${String(i)}`, make(i)]),
+        );
+        return { type: "object", properties, required: Object.keys(properties) };
+      };
+      const anyOf = () => ({ anyOf: [{ type: "string" }, { type: "null" }] });
+      const oneOf = () => ({ oneOf: [{ type: "string" }, { type: "null" }] });
+      const types = () => ({ type: ["string", "null"] });
+      for (const make of [anyOf, oneOf, types]) {
+        expect(refused(() => toProviderSchema(unions(16, make)))).toBe(false);
+        expect(refused(() => toProviderSchema(unions(17, make)))).toBe(true);
+      }
+    });
+  });
+
+  describe("references", () => {
+    const object = (properties: Record<string, unknown>): Record<string, unknown> => ({
+      type: "object",
+      properties,
+      required: Object.keys(properties),
+    });
+
+    it("refuses a schema that refers to itself, which the provider refuses", () => {
+      // To the root.
+      expect(refused(() => toProviderSchema(object({ child: { $ref: "#" } })))).toBe(true);
+      // A definition that refers to itself.
+      expect(
+        refused(() =>
+          toProviderSchema({
+            ...object({ tree: { $ref: "#/$defs/tree" } }),
+            $defs: {
+              tree: object({ children: { type: "array", items: { $ref: "#/$defs/tree" } } }),
+            },
+          }),
+        ),
+      ).toBe(true);
+      // Two that refer to each other, reached from the root.
+      expect(
+        refused(() =>
+          toProviderSchema({
+            ...object({ a: { $ref: "#/$defs/a" } }),
+            $defs: {
+              a: object({ b: { $ref: "#/$defs/b" } }),
+              b: object({ a: { $ref: "#/$defs/a" } }),
+            },
+          }),
+        ),
+      ).toBe(true);
+      // Two that refer to each other and are not reached at all.
+      expect(
+        refused(() =>
+          toProviderSchema({
+            ...object({ x: { type: "string" } }),
+            $defs: {
+              a: object({ b: { $ref: "#/$defs/b" } }),
+              b: object({ a: { $ref: "#/$defs/a" } }),
+            },
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("refuses what a zod schema that refers to itself comes to", () => {
+      interface Tree {
+        name: string;
+        children: Tree[];
+      }
+      const Tree: z.ZodType<Tree> = z.object({
+        name: z.string(),
+        children: z.lazy(() => z.array(Tree)),
+      });
+      expect(refused(() => toProviderSchema(z.toJSONSchema(Tree)))).toBe(true);
+    });
+
+    it("takes a definition that is used twice, and one that uses another, which is not a recursion", () => {
+      const schema = toProviderSchema({
+        ...object({ first: { $ref: "#/$defs/leaf" }, second: { $ref: "#/$defs/branch" } }),
+        $defs: {
+          leaf: object({ value: { type: "string" } }),
+          branch: object({ leaf: { $ref: "#/$defs/leaf" }, again: { $ref: "#/$defs/leaf" } }),
+        },
+      });
+      expect(Object.keys(schema["$defs"] as object)).toEqual(["leaf", "branch"]);
+    });
+
+    it("refuses a reference to somewhere else, or to a definition that is not there", () => {
+      for (const ref of [
+        "http://example.com/schema.json",
+        "#/definitions/x",
+        "other.json#/$defs/x",
+        "#/$defs/missing",
+        "#/$defs/",
+        "#/$defs/a/b",
+        "#/$defs/a~1b",
+        // Names that every object has and that no definition was given.
+        "#/$defs/toString",
+        "#/$defs/constructor",
+        "#/$defs/hasOwnProperty",
+        "#/$defs/__proto__",
+      ]) {
+        expect(
+          refused(() =>
+            toProviderSchema({ ...object({ a: { $ref: ref } }), $defs: { a: object({}) } }),
+          ),
+        ).toBe(true);
+      }
+      expect(refused(() => toProviderSchema(object({ a: { $ref: 5 } })))).toBe(true);
+    });
+
+    it("refuses a reference that is written as a path or with an escape, even to a definition so named", () => {
+      for (const name of ["a/b", "a~1b", "a~b"]) {
+        expect(
+          refused(() =>
+            toProviderSchema({
+              ...object({ a: { $ref: `#/$defs/${name}` } }),
+              $defs: { [name]: object({ v: { type: "string" } }) },
+            }),
+          ),
+        ).toBe(true);
+      }
+    });
+
+    it("drops definitions that are not at the root, which nothing can refer to", () => {
+      const schema = toProviderSchema(
+        object({ a: { type: "object", $defs: { inner: { type: "string" } }, properties: {} } }),
+      );
+      expect(JSON.stringify(schema)).not.toContain("inner");
+    });
+
+    it("checks a long chain of definitions that each refer to the next two in no time", () => {
+      // Two definitions at each of 60 levels, each referring to both of the next level: a path through
+      // it for each way of choosing, 2^60 of them. It must be looked at once for each definition.
+      const defs: Record<string, unknown> = {};
+      for (let i = 0; i < 60; i++) {
+        const next = {
+          left: { $ref: `#/$defs/a${String(i + 1)}` },
+          right: { $ref: `#/$defs/b${String(i + 1)}` },
+        };
+        defs[`a${String(i)}`] = object(next);
+        defs[`b${String(i)}`] = object(next);
+      }
+      defs["a60"] = object({ v: { type: "string" } });
+      defs["b60"] = object({ v: { type: "string" } });
+      const started = Date.now();
+      expect(
+        refused(() =>
+          toProviderSchema({ ...object({ top: { $ref: "#/$defs/a0" } }), $defs: defs }),
+        ),
+      ).toBe(false);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it("does not take a property that is called $ref for a reference", () => {
+      expect(refused(() => toProviderSchema(object({ $ref: { type: "string" } })))).toBe(false);
+    });
   });
 
   it("does not change the schema it is given", () => {
