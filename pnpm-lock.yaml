@@ -298,9 +298,18 @@ importers:
       '@codemugs/model-gateway':
         specifier: workspace:*
         version: link:../model-gateway
+      '@codemugs/model-provider-http':
+        specifier: workspace:*
+        version: link:../model-provider-http
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  packages/model-provider-http:
+    dependencies:
+      '@codemugs/model-gateway':
+        specifier: workspace:*
+        version: link:../model-gateway
 
   packages/storage:
     dependencies:
