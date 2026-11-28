@@ -1,0 +1,73 @@
+name: Model provider check
+
+# Checks, against the real model provider, what the adapter was only tested for against a stand-in:
+# that the provider accepts the request as the adapter writes it, that its answer has the shape the
+# adapter reads, that a key that is not valid is turned away, that an answer cut short is reported as
+# cut short, and that the check stays under a cap of its own (ADR 0043). It sends synthetic text
+# only, a few hundred tokens in all, and prints yes or no for each step, never the key.
+#
+# It runs only by hand, and only from main: the key is a secret of the `model-provider`
+# environment, which must accept runs of main alone, so a pull request cannot reach it. Make that
+# environment, with that rule, before adding the key. It costs money, a few cents at most, so it is
+# never run on a schedule or on a pull request.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: The model's name, as the provider spells it
+        required: true
+        default: claude-haiku-5-5
+        type: string
+      input_micros_per_million:
+        description: Upper bound for the price of input, in millionths of a US dollar for a million tokens
+        required: true
+        default: "15000000"
+        type: string
+      output_micros_per_million:
+        description: Upper bound for the price of output, in millionths of a US dollar for a million tokens
+        required: true
+        default: "75000000"
+        type: string
+      cap_micros:
+        description: What the whole check may spend, in millionths of a US dollar (200000 is 20 cents)
+        required: true
+        default: "200000"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-provider-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the model provider
+    # The environment refuses any other branch as well. This keeps a run from even being asked for.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: model-provider
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@codemugs/model-provider-anthropic..." build
+      # The key is in the environment of this step and of no other: install and build, which run
+      # code from dependencies, never see it. The inputs go in through the environment, never into
+      # the command line.
+      - name: Check the provider
+        env:
+          CODEMUGS_MODEL_API_KEY: ${{ secrets.CODEMUGS_MODEL_API_KEY }}
+          CODEMUGS_MODEL_NAME: ${{ inputs.model }}
+          CODEMUGS_MODEL_INPUT_MICROS_PER_MILLION: ${{ inputs.input_micros_per_million }}
+          CODEMUGS_MODEL_OUTPUT_MICROS_PER_MILLION: ${{ inputs.output_micros_per_million }}
+          CODEMUGS_MODEL_CHECK_CAP_MICROS: ${{ inputs.cap_micros }}
+        run: node packages/model-provider-anthropic/dist/live-check-main.js

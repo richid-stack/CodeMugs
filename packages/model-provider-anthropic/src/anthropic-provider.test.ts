@@ -1,5 +1,3 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
 import { Secret } from "@codemugs/configuration";
 import {
   createModelGateway,
@@ -10,6 +8,7 @@ import {
   type ProviderRequest,
 } from "@codemugs/model-gateway";
 import { afterEach, describe, expect, it } from "vitest";
+import { answer, closeServers, fakeApi, message } from "./test-server.js";
 import { z } from "zod";
 import {
   createAnthropicProvider,
@@ -20,74 +19,6 @@ import {
 // Made of pieces, so that no scanner takes it for a key; it is not one.
 const KEY = ["not", "a", "real", "key", "for", "tests", "0123456789"].join("-");
 const PRICE = { inputMicrosPerMillionTokens: 3_000_000, outputMicrosPerMillionTokens: 15_000_000 };
-
-interface Seen {
-  readonly method: string | undefined;
-  readonly url: string | undefined;
-  readonly headers: IncomingMessage["headers"];
-  readonly body: string;
-}
-
-type Handler = (request: IncomingMessage, response: ServerResponse, seen: Seen) => void;
-
-const servers: Server[] = [];
-
-/** A stand-in for the provider's API, on this machine, that notes what it is sent. */
-async function fakeApi(handler: Handler): Promise<{ url: string; seen: Seen[] }> {
-  const seen: Seen[] = [];
-  const server = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      const note: Seen = {
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        body: Buffer.concat(chunks).toString("utf8"),
-      };
-      seen.push(note);
-      handler(request, response, note);
-    });
-  });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { url: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`, seen };
-}
-
-afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.closeAllConnections();
-          server.close(() => resolve());
-        }),
-    ),
-  );
-});
-
-function answer(
-  response: ServerResponse,
-  status: number,
-  body: unknown,
-  headers: Record<string, string> = {},
-): void {
-  response.writeHead(status, { "content-type": "application/json", ...headers });
-  response.end(typeof body === "string" ? body : JSON.stringify(body));
-}
-
-function message(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: "msg_1",
-    type: "message",
-    role: "assistant",
-    model: "a-model",
-    content: [{ type: "text", text: '{"summary":"ok"}' }],
-    stop_reason: "end_turn",
-    usage: { input_tokens: 120, output_tokens: 15 },
-    ...overrides,
-  };
-}
 
 function provider(url: string, overrides: Partial<AnthropicProviderOptions> = {}) {
   return createAnthropicProvider({
@@ -124,6 +55,8 @@ async function kindOf(work: Promise<unknown>): Promise<string | undefined> {
   const error = await failureOf(work);
   return error instanceof ProviderFailure ? error.kind : `not a ProviderFailure: ${String(error)}`;
 }
+
+afterEach(closeServers);
 
 describe("the Anthropic provider", () => {
   describe("what it sends", () => {
@@ -353,10 +286,7 @@ describe("the Anthropic provider", () => {
     it("treats a request that never left as unavailable, which bills nothing", async () => {
       const gone = await fakeApi(() => undefined);
       const { url } = gone;
-      await new Promise<void>((resolve) => {
-        servers[0]?.closeAllConnections();
-        servers[0]?.close(() => resolve());
-      });
+      await closeServers();
       expect(await kindOf(provider(url).complete(request()))).toBe("unavailable");
     });
 

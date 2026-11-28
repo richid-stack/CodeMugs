@@ -34,7 +34,11 @@ const gateway = createModelGateway({ providers: [provider], policy, budget });
 
 ## Not built
 
-A live test (it needs the owner's key and a spend cap), streaming, wiring, and reading the key from the environment. Which data may reach a provider at all is the gateway's policy, and is nothing by default.
+Streaming, wiring, and reading the key from the environment. Which data may reach a provider at all is the gateway's policy, and is nothing by default.
+
+## The live check
+
+`src/live-check.ts` is a check of the adapter against the **real** API, started by hand from the `Model provider check` workflow (`.github/workflows/model-provider-check.yml`) on `main` only. It sends five steps of synthetic text under a cap of its own and prints yes or no for each, never the key (ADR 0043, decision 13). **It has not been run**: it needs a key in a `model-provider` GitHub environment that accepts runs of `main` alone, and a spend limit set at the provider. Its logic is tested against the stand-in server.
 
 ## Tests
 
