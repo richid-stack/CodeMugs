@@ -23,6 +23,7 @@
   "dependencies": {
     "@codemugs/configuration": "workspace:*",
     "@codemugs/model-gateway": "workspace:*",
+    "@codemugs/model-provider-http": "workspace:*",
     "zod": "4.6.7"
   }
 }

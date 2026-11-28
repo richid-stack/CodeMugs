@@ -1,12 +1,20 @@
 import type { Secret } from "@codemugs/configuration";
 import {
-  ProviderFailure,
   type DataClass,
   type ModelProvider,
   type ProviderPrice,
   type ProviderRequest,
   type ProviderResponse,
 } from "@codemugs/model-gateway";
+import {
+  UnusableAnswer,
+  checkedBaseUrl,
+  exchange,
+  isCount,
+  isKey,
+  isModel,
+  isName,
+} from "@codemugs/model-provider-http";
 import { z } from "zod";
 import { toProviderSchema } from "./schema.js";
 
@@ -24,16 +32,7 @@ export const DEFAULT_BASE_URL = "https://api.anthropic.com";
 /** The version of the API that this adapter is written for. */
 export const DEFAULT_API_VERSION = "2026-10-21";
 
-/** What an answer may weigh. The longest answer is a few thousand tokens; this is a wall, not a target. */
-const MAX_BODY_BYTES = 4 * 1_048_576;
-/** What is read of an error, to tell one kind of 500 from another. */
-const MAX_ERROR_BYTES = 65_536;
-const LOOPBACK = new Set(["127.0.0.1", "[::1]", "localhost"]);
-const NAME = /^[a-z][a-z0-9._-]{0,63}$/;
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const API_VERSION = /^\d{4}-\d{2}-\d{2}$/;
-/** Printable ASCII with no space: a key that cannot add a header to the request. */
-const KEY = /^[\x21-\x7e]{16,512}$/;
 
 export interface AnthropicProviderOptions {
   /** The API key, for a workspace that is for CodeMugs and has a spend limit of its own. */
@@ -80,154 +79,27 @@ const Message = z
 
 const ErrorBody = z.object({ error: z.object({ type: z.string().optional() }).loose() }).loose();
 
-/** Used for an answer that came, and was probably billed, and is not one: the gateway charges the worst case for it. */
-class UnusableAnswer extends Error {
-  constructor() {
-    super("the provider's answer could not be used");
-    this.name = "UnusableAnswer";
-  }
-}
-
-function checkedBaseUrl(text: string): string {
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    throw new RangeError("the provider's address is not valid");
-  }
-  const local = LOOPBACK.has(url.hostname);
-  if (
-    (url.protocol !== "https:" && !(url.protocol === "http:" && local)) ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.search !== "" ||
-    url.hash !== ""
-  ) {
-    throw new RangeError("the provider's address is not valid");
-  }
-  return url.href.replace(/\/$/, "");
-}
-
-function isCount(value: number, min: number): boolean {
-  return Number.isSafeInteger(value) && value >= min;
-}
-
 function checkOptions(options: AnthropicProviderOptions, key: string): void {
   const { price } = options;
   if (
-    !KEY.test(key) ||
-    !MODEL.test(options.model) ||
+    !isKey(key) ||
+    !isModel(options.model) ||
     !isCount(price.inputMicrosPerMillionTokens, 0) ||
     !isCount(price.outputMicrosPerMillionTokens, 0) ||
     !isCount(options.maxContextTokens, 1) ||
     !isCount(options.maxOutputTokens, 1) ||
-    (options.name !== undefined && !NAME.test(options.name)) ||
+    (options.name !== undefined && !isName(options.name)) ||
     (options.apiVersion !== undefined && !API_VERSION.test(options.apiVersion))
   ) {
     throw new RangeError("the model provider's settings are not valid");
   }
 }
 
-/**
- * Failures of the connection. A request that never left (the name was not found, the connection was
- * refused, the certificate was not trusted) cannot have been billed. Any other (a connection that
- * dropped once the request was sent) may have been, so it is a timeout, which the gateway charges for.
- */
-const NEVER_SENT = new Set([
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "ECONNREFUSED",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-  "ERR_INVALID_URL",
-]);
-
-function causeCodes(error: unknown): string[] {
-  const codes: string[] = [];
-  const seen = new Set<unknown>();
-  const visit = (value: unknown, depth: number): void => {
-    if (typeof value !== "object" || value === null || seen.has(value) || depth > 4) return;
-    seen.add(value);
-    const { code, cause, errors } = value as {
-      code?: unknown;
-      cause?: unknown;
-      errors?: unknown;
-    };
-    if (typeof code === "string") codes.push(code);
-    visit(cause, depth + 1);
-    if (Array.isArray(errors)) for (const inner of errors) visit(inner, depth + 1);
-  };
-  visit(error, 0);
-  return codes;
-}
-
-function connectionFailure(error: unknown): ProviderFailure {
-  const codes = causeCodes(error);
-  const neverSent =
-    codes.length > 0 &&
-    codes.every(
-      (code) =>
-        NEVER_SENT.has(code) ||
-        code.startsWith("ERR_TLS") ||
-        code.startsWith("ERR_SSL") ||
-        code.startsWith("CERT_") ||
-        code.startsWith("UNABLE_TO_") ||
-        code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
-        code === "SELF_SIGNED_CERT_IN_CHAIN" ||
-        code === "ERR_OSSL_BAD_DECRYPT",
-    );
-  return new ProviderFailure(neverSent ? "unavailable" : "timeout");
-}
-
-/** The body, read up to a limit, as untrusted text. */
-async function readText(response: Response, maxBytes: number): Promise<string> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    await response.body?.cancel();
-    throw new UnusableAnswer();
-  }
-  if (response.body === null) return "";
-  const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new UnusableAnswer();
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-/** What a status that is not a success says, which is one of the four kinds and nothing else. */
-async function failureFor(response: Response): Promise<ProviderFailure> {
-  const { status } = response;
-  if (status === 500) {
-    // The provider also answers a request that ran out of time with a 500, and that one may have been
-    // billed. A body that cannot be read or has no type cannot rule it out, so it is not taken for a
-    // plain failure: only a 500 that says what it is, and is not a timeout, is one.
-    let type: string | undefined;
-    try {
-      const parsed = ErrorBody.safeParse(JSON.parse(await readText(response, MAX_ERROR_BYTES)));
-      type = parsed.success ? parsed.data.error.type : undefined;
-    } catch {
-      type = undefined;
-    }
-    return new ProviderFailure(
-      type === undefined || type === "timeout_error" ? "timeout" : "unavailable",
-    );
-  }
-  await response.body?.cancel().catch(() => undefined);
-  if (status === 429) return new ProviderFailure("rate_limited");
-  if (status === 408 || status === 504) return new ProviderFailure("timeout");
-  if (status >= 500) return new ProviderFailure("unavailable");
-  // A refused request: a bad key, a spend limit, a request that is too large, a redirect (which is
-  // never followed: it would take the key to wherever it points), and anything else that is a 4xx.
-  return new ProviderFailure("rejected");
+/** The provider also answers a request that ran out of time with a 500; any other type that says what it is, is a plain failure. */
+function kindOf500(body: unknown): "timeout" | "unavailable" {
+  const parsed = ErrorBody.safeParse(body);
+  const type = parsed.success ? parsed.data.error.type : undefined;
+  return type === undefined || type === "timeout_error" ? "timeout" : "unavailable";
 }
 
 function finishOf(reason: string | null | undefined): ProviderResponse["finish"] {
@@ -290,48 +162,25 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Mode
     async complete(request: ProviderRequest): Promise<ProviderResponse> {
       // Before anything is sent: a schema that cannot be sent as it means is refused, and bills nothing.
       const schema = toProviderSchema(request.jsonSchema);
-      let response: Response;
-      try {
-        response = await send(`${base}/v1/messages`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": key,
-            "anthropic-version": version,
-            "user-agent": "codemugs",
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: request.maxOutputTokens,
-            system: request.system,
-            messages: [{ role: "user", content: request.user }],
-            output_config: { format: { type: "json_schema", schema } },
-          }),
-          redirect: "manual",
-          signal: request.signal,
-        });
-      } catch (error) {
-        // The gateway looks at the signal itself to tell a call that was given up on from one that failed.
-        if (request.signal.aborted) throw error;
-        throw connectionFailure(error);
-      }
-
-      if (response.status !== 200) {
-        if (response.status >= 200 && response.status < 300) {
-          await response.body?.cancel().catch(() => undefined);
-          throw new UnusableAnswer();
-        }
-        throw await failureFor(response);
-      }
-
-      let body: string;
-      try {
-        body = await readText(response, MAX_BODY_BYTES);
-      } catch (error) {
-        if (error instanceof UnusableAnswer || request.signal.aborted) throw error;
-        // The connection dropped while the answer came: it was sent and may have been billed.
-        throw new ProviderFailure("timeout");
-      }
+      const body = await exchange({
+        send,
+        url: `${base}/v1/messages`,
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": version,
+          "user-agent": "codemugs",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: request.maxOutputTokens,
+          system: request.system,
+          messages: [{ role: "user", content: request.user }],
+          output_config: { format: { type: "json_schema", schema } },
+        }),
+        signal: request.signal,
+        kindOf500,
+      });
       return responseFrom(body);
     },
   };
