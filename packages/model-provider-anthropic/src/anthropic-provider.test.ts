@@ -265,7 +265,7 @@ describe("the Anthropic provider", () => {
       expect(await kindOf(provider(api.url).complete(request()))).toBe(kind);
     });
 
-    it("tells a 500 that ran out of time from one that broke", async () => {
+    it("tells a 500 that ran out of time from one that broke, and takes one that cannot be told for a timeout, which may have been billed", async () => {
       const slow = await fakeApi((_request, response) => {
         answer(response, 500, { type: "error", error: { type: "timeout_error", message: "m" } });
       });
@@ -279,8 +279,22 @@ describe("the Anthropic provider", () => {
         const broken = await fakeApi((_request, response) => {
           answer(response, 500, body);
         });
-        expect(await kindOf(provider(broken.url).complete(request()))).toBe("unavailable");
+        expect(await kindOf(provider(broken.url).complete(request()))).toBe("timeout");
       }
+      // A body that is too large to read, and one that is not there.
+      const large = await fakeApi((_request, response) => {
+        answer(response, 500, "x".repeat(70_000));
+      });
+      expect(await kindOf(provider(large.url).complete(request()))).toBe("timeout");
+      const empty = await fakeApi((_request, response) => {
+        response.writeHead(500).end();
+      });
+      expect(await kindOf(provider(empty.url).complete(request()))).toBe("timeout");
+      // A 500 that says what it is, and that is not a timeout, is a plain failure.
+      const plain = await fakeApi((_request, response) => {
+        answer(response, 500, { type: "error", error: { type: "api_error", message: "m" } });
+      });
+      expect(await kindOf(provider(plain.url).complete(request()))).toBe("unavailable");
     });
 
     it("treats a request that never left as unavailable, which bills nothing", async () => {

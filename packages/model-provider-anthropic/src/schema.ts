@@ -64,6 +64,13 @@ const FORMATS = new Set([
 
 const MAX_DEPTH = 32;
 const MAX_NODES = 5_000;
+/** The provider's limits on a schema, which it answers with a 400 when they are passed (so nothing need be sent to find out). */
+const MAX_OPTIONAL_PROPERTIES = 24;
+const MAX_UNION_PROPERTIES = 16;
+/** The only references that a schema from zod holds: to the root, or to a definition. */
+const LOCAL_REF = /^#(?:\/\$defs\/([^/~]+))?$/;
+/** Names that are not a key for the table of references. */
+const ROOT = "#";
 
 function refuse(): never {
   throw new ProviderFailure("rejected");
@@ -75,6 +82,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 interface Walk {
   nodes: number;
+  /** Properties that are not required, and properties that are a union, over the whole schema. */
+  optional: number;
+  unions: number;
+  /** Which definition (or the root) is being read, and what each refers to. */
+  scope: string;
+  refs: Map<string, Set<string>>;
 }
 
 function convert(node: unknown, depth: number, walk: Walk): Record<string, unknown> {
@@ -94,6 +107,18 @@ function convert(node: unknown, depth: number, walk: Walk): Record<string, unkno
       else said.push(`${key} ${JSON.stringify(value)}`);
     } else if (CONSTRAINTS.has(key)) {
       said.push(`${key} ${JSON.stringify(value)}`);
+    } else if (key === "$defs" && depth > 0) {
+      // Dropped: nothing can refer to it.
+    } else if (key === "$ref") {
+      // A reference to another file or address is not followed by the provider, and one that leads
+      // back to where it started is a recursion, which it refuses. Both are found here, not there.
+      const target = typeof value === "string" ? LOCAL_REF.exec(value) : null;
+      if (target === null) return refuse();
+      out[key] = value;
+      const to = target[1] ?? ROOT;
+      const from = walk.refs.get(walk.scope) ?? new Set<string>();
+      from.add(to);
+      walk.refs.set(walk.scope, from);
     } else if (KEPT.has(key)) {
       out[key] = value;
     }
@@ -102,6 +127,18 @@ function convert(node: unknown, depth: number, walk: Walk): Record<string, unkno
   const { properties, items, prefixItems, anyOf, allOf, additionalProperties } = out;
   if (properties !== undefined) {
     if (!isRecord(properties)) return refuse();
+    const required = Array.isArray(out["required"]) ? out["required"] : [];
+    for (const [name, child] of Object.entries(properties)) {
+      if (!required.includes(name)) walk.optional += 1;
+      if (
+        isRecord(child) &&
+        (Array.isArray(child["type"]) ||
+          child["anyOf"] !== undefined ||
+          child["oneOf"] !== undefined)
+      ) {
+        walk.unions += 1;
+      }
+    }
     out["properties"] = Object.fromEntries(
       Object.entries(properties).map(([name, child]) => [name, convert(child, depth + 1, walk)]),
     );
@@ -119,8 +156,13 @@ function convert(node: unknown, depth: number, walk: Walk): Record<string, unkno
   const defs = out["$defs"];
   if (defs !== undefined) {
     if (!isRecord(defs)) return refuse();
+    // Only the root's definitions can be referred to (`#/$defs/name` starts at the root), so only
+    // they are kept, and they are all that are read here.
     out["$defs"] = Object.fromEntries(
-      Object.entries(defs).map(([name, child]) => [name, convert(child, depth + 1, walk)]),
+      Object.entries(defs).map(([name, child]) => {
+        walk.scope = name;
+        return [name, convert(child, depth + 1, walk)];
+      }),
     );
   }
 
@@ -147,5 +189,28 @@ function convert(node: unknown, depth: number, walk: Walk): Record<string, unkno
 export function toProviderSchema(
   schema: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
-  return convert(schema, 0, { nodes: 0 });
+  const walk: Walk = { nodes: 0, optional: 0, unions: 0, scope: ROOT, refs: new Map() };
+  const converted = convert(schema, 0, walk);
+  if (walk.optional > MAX_OPTIONAL_PROPERTIES || walk.unions > MAX_UNION_PROPERTIES)
+    return refuse();
+  if (hasCycle(walk.refs, converted)) return refuse();
+  return converted;
+}
+
+/** Whether a reference leads back to where it started, or to a definition that is not there. */
+function hasCycle(refs: Map<string, Set<string>>, schema: Record<string, unknown>): boolean {
+  const defs = isRecord(schema["$defs"]) ? schema["$defs"] : {};
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (name: string): boolean => {
+    if (name !== ROOT && !(name in defs)) return true;
+    const seen = state.get(name);
+    if (seen === "visiting") return true;
+    if (seen === "done") return false;
+    state.set(name, "visiting");
+    for (const next of refs.get(name) ?? []) if (visit(next)) return true;
+    state.set(name, "done");
+    return false;
+  };
+  for (const name of [ROOT, ...Object.keys(defs)]) if (visit(name)) return true;
+  return false;
 }
